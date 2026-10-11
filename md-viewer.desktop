@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Markdown Viewer
+GenericName=Markdown Viewer & Editor
+Comment=Lightweight, lightning-fast Markdown viewer and editor
+Exec=md-viewer %F
+TryExec=md-viewer
+Icon=text-x-markdown
+Terminal=false
+Categories=Utility;TextEditor;Office;Viewer;
+MimeType=text/markdown;text/x-markdown;
+StartupNotify=true
+Keywords=markdown;viewer;editor;md;preview;

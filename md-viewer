@@ -1,0 +1,4 @@
+#!/bin/bash
+# md-viewer launcher — uses the project venv (system-site-packages + uv-managed markdown)
+DIR="$(dirname "$(readlink -f "$0")")"
+exec "$DIR/.venv/bin/python" "$DIR/md_viewer.py" "$@"
