@@ -1,5 +1,5 @@
 #!/bin/bash
-# md-viewer-clipboard — Quick-launch md-viewer with system clipboard content.
+# md-viewer-clipboard: launch md-viewer with system clipboard content.
 # Bound to Super+Shift+M via GNOME custom keybinding (see setup.sh).
 DIR="$(dirname "$(readlink -f "$0")")"
 exec "$DIR/.venv/bin/python" "$DIR/md_viewer.py" --clipboard

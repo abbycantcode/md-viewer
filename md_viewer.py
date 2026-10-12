@@ -6,7 +6,7 @@
 #     "pyyaml",
 # ]
 # ///
-"""md-viewer — Lightweight, high-fidelity markdown viewer and editor for Ubuntu."""
+"""md-viewer: Markdown viewer and editor for Ubuntu."""
 
 import sys
 import os
@@ -90,7 +90,7 @@ def parse_front_matter(text: str) -> tuple[dict | None, str]:
 
 
 def render_front_matter_html(meta: dict | None) -> str:
-    """Format parsed metadata into an elegant, modern collapsible metadata card."""
+    """Format parsed metadata into a collapsible metadata card."""
     if not meta:
         return ""
 
@@ -321,7 +321,7 @@ def preprocess_markdown(text: str) -> tuple[str, dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# CSS for rendered HTML view (Refreshing, Modern Typography & Aesthetics)
+# CSS for rendered HTML view
 # ---------------------------------------------------------------------------
 RENDER_CSS = """\
 :root {
@@ -1492,7 +1492,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._clipboard_text: str | None = None
         self.win: Gtk.ApplicationWindow | None = None
 
-        # GTK CSS provider for modern widget styling and dynamic font zoom
+        # GTK CSS provider for widget styling and dynamic font zoom
         self.css_provider = Gtk.CssProvider()
         screen = Gdk.Screen.get_default()
         if screen:
@@ -1915,7 +1915,7 @@ class MarkdownViewerApp(Gtk.Application):
         else:
             basename = "Untitled"
         prefix = "* " if self._dirty else ""
-        self.win.set_title(f"{prefix}{basename} — md-viewer")
+        self.win.set_title(f"{prefix}{basename} - md-viewer")
         header = self.win.get_titlebar()
         if isinstance(header, Gtk.HeaderBar):
             header.set_title(f"{prefix}{basename}")

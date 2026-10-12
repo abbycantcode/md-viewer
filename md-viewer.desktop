@@ -2,7 +2,7 @@
 Type=Application
 Name=Markdown Viewer
 GenericName=Markdown Viewer & Editor
-Comment=Lightweight, lightning-fast Markdown viewer and editor
+Comment=Markdown viewer and editor
 Exec=md-viewer %F
 TryExec=md-viewer
 Icon=text-x-markdown
