@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Markdown Quick Editor
+GenericName=Clipboard Markdown Editor
+Comment=Open md-viewer with clipboard content for quick editing
+Exec=md-viewer-clipboard
+TryExec=md-viewer-clipboard
+Icon=text-x-markdown
+Terminal=false
+Categories=Utility;TextEditor;
+StartupNotify=true
+NoDisplay=true
+Keywords=markdown;clipboard;notepad;quick;editor;

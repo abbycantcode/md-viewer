@@ -12,6 +12,7 @@ import sys
 import os
 import re
 import html
+import subprocess
 
 import markdown
 from pygments.formatters import HtmlFormatter
@@ -1487,6 +1488,8 @@ class MarkdownViewerApp(Gtk.Application):
         self._file_mtime: float = 0.0
         self._dirty: bool = False
         self._loading: bool = False
+        self._clipboard_mode: bool = False
+        self._clipboard_text: str | None = None
         self.win: Gtk.ApplicationWindow | None = None
 
         # GTK CSS provider for modern widget styling and dynamic font zoom
@@ -1502,13 +1505,16 @@ class MarkdownViewerApp(Gtk.Application):
     # -- Lifecycle ----------------------------------------------------------
 
     def do_activate(self):
-        """Launched with no file argument."""
+        """Launched with no file argument (or --clipboard mode)."""
         if self.win:
             self.win.present()
             return
         self._build_window()
         self.win.present()
-        self._open_file_dialog()
+        if self._clipboard_mode and self._clipboard_text is not None:
+            self._load_clipboard_content(self._clipboard_text)
+        else:
+            self._open_file_dialog()
 
     def do_open(self, files, n_files, hint):
         """Launched with a file argument."""
@@ -1902,13 +1908,23 @@ class MarkdownViewerApp(Gtk.Application):
     def _update_title(self):
         if not self.win:
             return
-        basename = os.path.basename(self.current_file) if self.current_file else "Untitled"
+        if self.current_file:
+            basename = os.path.basename(self.current_file)
+        elif self._clipboard_mode:
+            basename = "Clipboard"
+        else:
+            basename = "Untitled"
         prefix = "* " if self._dirty else ""
         self.win.set_title(f"{prefix}{basename} — md-viewer")
         header = self.win.get_titlebar()
         if isinstance(header, Gtk.HeaderBar):
             header.set_title(f"{prefix}{basename}")
-            subtitle = os.path.dirname(self.current_file) if self.current_file else "Unsaved"
+            if self.current_file:
+                subtitle = os.path.dirname(self.current_file)
+            elif self._clipboard_mode:
+                subtitle = "Quick Editor"
+            else:
+                subtitle = "Unsaved"
             header.set_subtitle(subtitle)
 
     def _update_stats(self):
@@ -2110,6 +2126,32 @@ class MarkdownViewerApp(Gtk.Application):
         # Start file monitor
         self._start_file_monitor()
 
+    def _load_clipboard_content(self, text: str):
+        """Populate editor with clipboard text and switch to source view."""
+        self.current_file = None
+        self._set_dirty(True)
+
+        # Rendered view
+        html_content = render_markdown(text, self.dark_mode)
+        base_uri = GLib.filename_to_uri(os.getcwd(), None) + "/"
+        self.webview.load_html(html_content, base_uri)
+
+        # Source view
+        self._loading = True
+        try:
+            self.source_buffer.begin_not_undoable_action()
+            self.source_buffer.set_text(text)
+            self.source_buffer.end_not_undoable_action()
+        finally:
+            self._loading = False
+
+        self._set_dirty(True)
+        self._update_title()
+        self._update_stats()
+
+        # Start in editor mode
+        self.stack.set_visible_child_name("source")
+
     def _show_error(self, message: str):
         dialog = Gtk.MessageDialog(
             parent=self.win,
@@ -2163,11 +2205,40 @@ class MarkdownViewerApp(Gtk.Application):
 
 
 # ---------------------------------------------------------------------------
+# Clipboard reading helper
+# ---------------------------------------------------------------------------
+def _read_system_clipboard() -> str:
+    """Read text from the system clipboard, trying Wayland-native first."""
+    # Wayland: wl-paste
+    for cmd in (["wl-paste", "--no-newline"], ["xclip", "-selection", "clipboard", "-o"]):
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if result.returncode == 0:
+                return result.stdout
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 def main():
+    argv = sys.argv[:]
+    clipboard_mode = "--clipboard" in argv
+    if clipboard_mode:
+        argv.remove("--clipboard")
+
     app = MarkdownViewerApp()
-    app.run(sys.argv)
+    if clipboard_mode:
+        app._clipboard_mode = True
+        app._clipboard_text = _read_system_clipboard()
+    app.run(argv)
 
 
 if __name__ == "__main__":

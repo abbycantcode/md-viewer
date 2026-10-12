@@ -42,6 +42,20 @@ You can also double-click `.md` files or right-click and choose **Open With > Ma
 | **Toggle Light / Dark Theme** | `Ctrl+T` | 🌙 / ☀️ Theme icon button |
 | **Quit** | `Ctrl+Q` | Window close |
 
+### System-wide Shortcut
+
+| Action | Shortcut |
+|---|---|
+| **Clipboard Quick Editor** | `Super+Shift+M` |
+
+Opens a new md-viewer instance in editor mode with the current system clipboard content pre-loaded. Acts as a quick notepad for viewing and editing clipboard text as Markdown. Use `Ctrl+E` to toggle to rendered preview, `Ctrl+S` to save to a file.
+
+You can also launch it from the terminal:
+
+```bash
+md-viewer --clipboard
+```
+
 ## Key Features
 
 - **Blazing Fast**: Native GTK3 + WebKit2GTK startup (<200ms cold start, ~40-60MB RSS)
