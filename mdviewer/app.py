@@ -39,7 +39,6 @@ from mdviewer.tab import DocumentTab  # noqa: E402
 from mdviewer.themes import (  # noqa: E402
     THEMES,
     THEME_ORDER,
-    is_dark_theme,
     resolve_theme_id,
 )
 
@@ -47,16 +46,41 @@ _VIEW_MODE_CYCLE = ("preview", "split", "edit")
 
 
 def _detect_system_dark() -> bool:
-    settings = Gtk.Settings.get_default()
-    if settings is None:
-        return False
+    """Detect dark desktop preference via GNOME color-scheme, GTK settings, or theme luminance."""
     try:
-        if settings.get_property("gtk-application-prefer-dark-theme"):
-            return True
-        theme_name = str(settings.get_property("gtk-theme-name") or "").lower()
-        return "dark" in theme_name
+        schema_source = Gio.SettingsSchemaSource.get_default()
+        if schema_source is not None and schema_source.lookup("org.gnome.desktop.interface", True):
+            iface = Gio.Settings.new("org.gnome.desktop.interface")
+            scheme = str(iface.get_string("color-scheme") or "").lower()
+            if "dark" in scheme:
+                return True
+            if "light" in scheme:
+                return False
     except Exception:
-        return False
+        pass
+
+    settings = Gtk.Settings.get_default()
+    if settings is not None:
+        try:
+            if settings.get_property("gtk-application-prefer-dark-theme"):
+                return True
+            theme_name = str(settings.get_property("gtk-theme-name") or "").lower()
+            if "dark" in theme_name:
+                return True
+        except Exception:
+            pass
+
+    # Fallback: measure actual GTK theme background luminance (catches themes like Obsidian-Glass, Dracula, Nord)
+    try:
+        probe = Gtk.Window()
+        ok, rgba = probe.get_style_context().lookup_color("theme_bg_color")
+        probe.destroy()
+        if ok:
+            luminance = 0.2126 * rgba.red + 0.7152 * rgba.green + 0.0722 * rgba.blue
+            return luminance < 0.5
+    except Exception:
+        pass
+    return False
 
 
 def _read_custom_css(path_str: str) -> str:
@@ -721,16 +745,6 @@ class MarkdownViewerApp(Gtk.Application):
     # Theme & Zoom
     # ------------------------------------------------------------------
     def _apply_theme_css(self) -> None:
-        settings = Gtk.Settings.get_default()
-        if settings is not None:
-            try:
-                settings.set_property(
-                    "gtk-application-prefer-dark-theme",
-                    is_dark_theme(self.resolved_theme),
-                )
-            except Exception:
-                pass
-
         css = build_gtk_css(self.resolved_theme, self.config.zoom_level)
         if self._css_provider is None:
             self._css_provider = Gtk.CssProvider()
