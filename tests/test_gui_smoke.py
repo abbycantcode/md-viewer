@@ -548,7 +548,10 @@ def test_comments_flow_dialog_validation_and_dirty_nav_guard(
 def test_agentic_env_sidebar_filtering_and_empty_clipboard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P1-1 & P0-3: Verify Agentic Env sidebar filtering + empty clipboard Split UX."""
+    """P1-1, P0-3, & R2-P0-2: Verify Agentic Env sidebar filtering, async race guard, & empty clipboard Split UX."""
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     skill_file = tmp_path / "SKILL.md"
@@ -566,10 +569,28 @@ def test_agentic_env_sidebar_filtering_and_empty_clipboard(
         name: str
         description: str
 
+    from mdviewer.agentic_env import clear_catalog_cache
     from mdviewer.app import MarkdownViewerApp
     from mdviewer.cli import LaunchOptions
     from mdviewer.clipboard import ClipboardPayload
 
+    clear_catalog_cache()
+
+    pending_sidebar_callbacks: list[Callable[[object], None]] = []
+    pending_welcome_callbacks: list[Callable[[object], None]] = []
+
+    def _deferred_sidebar_scan(callback, **_kwargs):
+        pending_sidebar_callbacks.append(callback)
+
+    def _deferred_welcome_scan(callback, **_kwargs):
+        pending_welcome_callbacks.append(callback)
+
+    monkeypatch.setattr(
+        "mdviewer.sidebar.discover_agentic_catalog_async", _deferred_sidebar_scan
+    )
+    monkeypatch.setattr(
+        "mdviewer.dialogs.discover_agentic_catalog_async", _deferred_welcome_scan
+    )
     monkeypatch.setattr(
         "mdviewer.app.read_clipboard_smart",
         lambda prefer_html_convert=True: ClipboardPayload(text="", was_html=False),
@@ -579,33 +600,59 @@ def test_agentic_env_sidebar_filtering_and_empty_clipboard(
 
     def _verify(a: MarkdownViewerApp) -> None:
         assert a.sidebar is not None
+        assert a.welcome_view is not None
         a.sidebar.set_active_tab("env")
         _pump_events(0.05)
 
-        a.sidebar.set_agentic_artifacts(
-            [
-                _StubArtifact(
-                    path=str(skill_file),
-                    rel_path="skills/demo/SKILL.md",
-                    env_source="claude",
-                    scope="global",
-                    kind="skill",
-                    name="demo-skill",
-                    description="Demo global skill",
-                ),
-                _StubArtifact(
-                    path=str(rule_file),
-                    rel_path="AGENTS.md",
-                    env_source="project",
-                    scope="project",
-                    kind="rule",
-                    name="AGENTS.md",
-                    description="Repo instructions",
-                ),
-            ]
-        )
+        # In-flight async scans were queued before manual set_agentic_artifacts()
+        assert len(pending_sidebar_callbacks) >= 1
+
+        manual_artifacts = [
+            _StubArtifact(
+                path=str(skill_file),
+                rel_path="skills/demo/SKILL.md",
+                env_source="claude",
+                scope="global",
+                kind="skill",
+                name="demo-skill",
+                description="Demo global skill",
+            ),
+            _StubArtifact(
+                path=str(rule_file),
+                rel_path="AGENTS.md",
+                env_source="project",
+                scope="project",
+                kind="rule",
+                name="AGENTS.md",
+                description="Repo instructions",
+            ),
+        ]
+        a.sidebar.set_agentic_artifacts(manual_artifacts)
+        a.welcome_view.set_agentic_artifacts([manual_artifacts[0]])
         _pump_events(0.05)
         assert a.sidebar._env_count_label.get_text() == "2"
+        assert a.welcome_view._welcome_env_count.get_text() == "1"
+
+        # Now deliver stale in-flight async callbacks with 15 bogus artifacts: must be ignored!
+        stale_catalog = [
+            _StubArtifact(
+                path=str(tmp_path / f"stale_{i}.md"),
+                rel_path=f"stale_{i}.md",
+                env_source="gemini",
+                scope="global",
+                kind="skill",
+                name=f"stale-{i}",
+                description="Stale background result",
+            )
+            for i in range(15)
+        ]
+        for cb in list(pending_sidebar_callbacks):
+            cb(stale_catalog)
+        for cb in list(pending_welcome_callbacks):
+            cb(stale_catalog)
+        _pump_events(0.08)
+        assert a.sidebar._env_count_label.get_text() == "2"
+        assert a.welcome_view._welcome_env_count.get_text() == "1"
 
         # Filter by scope: project
         a.sidebar._env_scope_buttons["project"].set_active(True)
@@ -632,6 +679,296 @@ def test_agentic_env_sidebar_filtering_and_empty_clipboard(
         _pump_events(0.05)
         assert clip_tab._notice_infobar.get_visible() is False
         assert "Captured" in clip_tab.get_text()
+
+    _run_app_scenario(app, _verify)
+
+
+def test_preview_selection_request_add_comment_prefills_dialog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R2-P0-1: Selecting preview text in WebKit2 must prefill exact quote and heading."""
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    doc = tmp_path / "selection_test.md"
+    doc.write_text(
+        "# Overview\n\nIntro paragraph.\n\n## Architecture\n\n"
+        "Markveil preserves exact preview selection quotes cleanly.\n",
+        encoding="utf-8",
+    )
+
+    import mdviewer.tab as tab_mod
+    from mdviewer.app import MarkdownViewerApp
+    from mdviewer.cli import LaunchOptions
+    from mdviewer.dialogs import CommentEditorDialog
+
+    captured: list[tuple[str, str]] = []
+
+    class _CapturingCommentDialog(CommentEditorDialog):
+        def run(self) -> int:
+            captured.append((self.get_heading(), self.get_quote()))
+            return Gtk.ResponseType.CANCEL
+
+    monkeypatch.setattr(tab_mod, "CommentEditorDialog", _CapturingCommentDialog)
+
+    app = MarkdownViewerApp(LaunchOptions(files=[str(doc)]))
+
+    def _verify(a: MarkdownViewerApp) -> None:
+        tab = a.get_active_tab()
+        assert tab is not None
+
+        # Wait until WebKit2 finishes loading the rendered preview and JS bridge
+        ready: list[bool] = []
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not ready:
+            done_flag: list[str | None] = []
+            tab._eval_js(
+                "typeof window.__markveilGetSelectionPayload === 'function' ? 'ok' : ''",
+                callback=lambda val: done_flag.append(val),
+            )
+            _pump_events(0.08)
+            if done_flag and done_flag[0] == "ok":
+                ready.append(True)
+        assert ready, "WebKit2 preview JS bridge did not initialize in time"
+
+        # Select the exact paragraph text inside .markdown-container under ## Architecture
+        selected_text: list[str | None] = []
+        tab._eval_js(
+            "(function(){"
+            "var ps = document.querySelectorAll('.markdown-container p');"
+            "var target = null;"
+            "for (var i = 0; i < ps.length; i++) {"
+            "  if (ps[i].textContent.indexOf('Markveil preserves exact preview selection') !== -1) {"
+            "    target = ps[i]; break;"
+            "  }"
+            "}"
+            "if (!target) return '';"
+            "var range = document.createRange();"
+            "range.selectNodeContents(target);"
+            "var sel = window.getSelection();"
+            "sel.removeAllRanges();"
+            "sel.addRange(range);"
+            "return sel.toString().trim();"
+            "})();",
+            callback=lambda val: selected_text.append(val),
+        )
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not selected_text:
+            _pump_events(0.05)
+        assert selected_text == [
+            "Markveil preserves exact preview selection quotes cleanly."
+        ]
+
+        tab.request_add_comment()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not captured:
+            _pump_events(0.05)
+
+        assert captured == [
+            (
+                "Architecture",
+                "Markveil preserves exact preview selection quotes cleanly.",
+            )
+        ]
+
+    _run_app_scenario(app, _verify)
+    stderr = capsys.readouterr().err
+    assert "Failed to parse selection payload" not in stderr
+
+
+def test_html_clipboard_history_badge_rendering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R2-P1-1: HTML clipboard captures record cleanly and display [HTML → MD] in popovers."""
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    from mdviewer.app import MarkdownViewerApp
+    from mdviewer.cli import LaunchOptions
+    from mdviewer.clipboard import ClipboardPayload, get_clipboard_history
+
+    get_clipboard_history().clear()
+    monkeypatch.setattr(
+        "mdviewer.app.read_clipboard_smart",
+        lambda prefer_html_convert=True: ClipboardPayload(text="", was_html=False),
+    )
+
+    app = MarkdownViewerApp(LaunchOptions(files=[]))
+
+    def _verify(a: MarkdownViewerApp) -> None:
+        a.action_open_clipboard()
+        _pump_events(0.05)
+        clip_tab = a.get_active_tab()
+        assert clip_tab is not None
+        assert a.welcome_view is not None
+
+        clip_tab.load_clipboard_payload("Plain snippet line", was_html=False, record_history=True)
+        clip_tab.load_clipboard_payload(
+            "# Converted Heading\n\nRich HTML body.", was_html=True, record_history=True
+        )
+        _pump_events(0.05)
+
+        entries = get_clipboard_history().entries()
+        assert len(entries) == 2
+        assert entries[0].source == "html"
+        assert entries[1].source == "text"
+
+        # Tab clipboard history popover labels
+        clip_tab._refresh_clipboard_history_popover(clip_tab._clip_history_popover)
+        tab_labels = [
+            child.get_label()
+            for child in clip_tab._clip_history_box.get_children()
+            if isinstance(child, Gtk.ModelButton)
+        ]
+        assert "[HTML → MD] # Converted Heading" in tab_labels
+        assert "[Text] Plain snippet line" in tab_labels
+
+        # WelcomeView clipboard history popover labels
+        a.welcome_view._refresh_clipboard_history_popover(
+            a.welcome_view._clip_history_popover
+        )
+        welcome_labels = [
+            child.get_label()
+            for child in a.welcome_view._clip_history_box.get_children()
+            if isinstance(child, Gtk.ModelButton)
+        ]
+        assert "[HTML → MD] # Converted Heading" in welcome_labels
+        assert "[Text] Plain snippet line" in welcome_labels
+
+    _run_app_scenario(app, _verify)
+    get_clipboard_history().clear()
+    stderr = capsys.readouterr().err
+    assert "Failed to record clipboard history" not in stderr
+
+
+def test_context_inspector_agentic_card_sibling_links_and_live_meta_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2-P2-1 & R2-P2-2: Context Inspector shows AgenticArtifact card, clickable siblings, & live meta sync."""
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    repo = tmp_path / "demo_repo"
+    (repo / ".git").mkdir(parents=True)
+    skill_dir = repo / "skills" / "demo-skill"
+    refs_dir = skill_dir / "references"
+    scripts_dir = skill_dir / "scripts"
+    refs_dir.mkdir(parents=True)
+    scripts_dir.mkdir(parents=True)
+
+    guide_file = refs_dir / "guide.md"
+    guide_file.write_text("# Sibling Guide\n\nHelpful reference.\n", encoding="utf-8")
+    script_file = scripts_dir / "check.py"
+    script_file.write_text("print('ok')\n", encoding="utf-8")
+
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "---\n"
+        "name: demo-skill\n"
+        "description: Initial skill summary\n"
+        "triggers: [deploy, audit]\n"
+        'globs: ["**/*.py"]\n'
+        "alwaysApply: true\n"
+        "---\n\n"
+        "# Demo Skill\n\n"
+        "Follow these verification instructions carefully.\n",
+        encoding="utf-8",
+    )
+
+    from mdviewer.app import MarkdownViewerApp
+    from mdviewer.cli import LaunchOptions
+
+    def _collect_label_texts(widget: Gtk.Widget) -> list[str]:
+        texts: list[str] = []
+        if isinstance(widget, Gtk.Label):
+            texts.append(widget.get_text())
+        if isinstance(widget, Gtk.Container):
+            for child in widget.get_children():
+                texts.extend(_collect_label_texts(child))
+        return texts
+
+    app = MarkdownViewerApp(LaunchOptions(files=[str(skill_file)]))
+
+    def _verify(a: MarkdownViewerApp) -> None:
+        tab = a.get_active_tab()
+        assert tab is not None
+        assert a.sidebar is not None
+        assert tab.context_report is not None
+        assert tab.context_report.agentic_artifact is not None
+
+        # R2-P2-2: Initial token_estimate synced with ContextReport.est_tokens
+        assert tab._agentic_meta is not None
+        assert tab._agentic_meta["token_estimate"] == tab.context_report.est_tokens
+        assert tab.last_render_result is not None
+        assert f"~{tab.context_report.est_tokens:,} tok" in tab.last_render_result.html
+
+        # R2-P2-1: Context Inspector renders Agentic Artifact card with metadata & sibling links
+        a.sidebar.set_active_tab("context")
+        _pump_events(0.05)
+        assert a.sidebar._agentic_context_card is not None
+        card_texts = _collect_label_texts(a.sidebar._agentic_context_card)
+        joined_card = " | ".join(card_texts)
+        assert "project" in joined_card
+        assert "skill" in joined_card
+        assert "Always Apply" in joined_card
+        assert "deploy, audit" in joined_card
+        assert "**/*.py" in joined_card
+
+        sibling_labels = [btn.get_label() for btn in a.sidebar._context_sibling_buttons]
+        assert "references/guide.md" in sibling_labels
+        assert "scripts/check.py" in sibling_labels
+
+        # Clicking a sibling link button opens the sibling file directly in a tab
+        guide_btn = next(
+            btn
+            for btn in a.sidebar._context_sibling_buttons
+            if btn.get_label() == "references/guide.md"
+        )
+        guide_btn.clicked()
+        _pump_events(0.08)
+        opened = a.get_active_tab()
+        assert opened is not None
+        assert opened.current_file == str(guide_file.resolve())
+
+        # Switch back to SKILL.md tab and verify live in-memory frontmatter + token sync
+        a.open_file(str(skill_file))
+        _pump_events(0.05)
+        skill_tab = a.get_active_tab()
+        assert skill_tab is tab
+
+        updated_buffer = (
+            "---\n"
+            "name: live-renamed-skill\n"
+            "description: Live edited description\n"
+            "triggers: [live-trigger]\n"
+            'globs: ["src/*.ts"]\n'
+            "alwaysApply: false\n"
+            "---\n\n"
+            "# Demo Skill\n\n"
+            + ("Expanded live documentation body text. " * 25)
+            + "\n"
+        )
+        skill_tab.source_buffer.set_text(updated_buffer)
+        skill_tab.render_preview()
+        _pump_events(0.06)
+
+        assert skill_tab.context_report is not None
+        assert skill_tab._agentic_meta is not None
+        assert skill_tab._agentic_meta["token_estimate"] == skill_tab.context_report.est_tokens
+        assert skill_tab._agentic_meta["name"] == "live-renamed-skill"
+        assert skill_tab._agentic_meta["description"] == "Live edited description"
+        assert skill_tab._agentic_meta["triggers"] == ["live-trigger"]
+        assert skill_tab._agentic_meta["globs"] == ["src/*.ts"]
+        assert skill_tab._agentic_meta["always_apply"] is False
+        assert skill_tab.last_render_result is not None
+        assert "live-renamed-skill" in skill_tab.last_render_result.html
+        assert f"~{skill_tab.context_report.est_tokens:,} tok" in skill_tab.last_render_result.html
 
     _run_app_scenario(app, _verify)
 

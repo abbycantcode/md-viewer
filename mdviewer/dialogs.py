@@ -99,13 +99,20 @@ def _extract_catalog_artifacts(catalog: Any) -> list[Any]:
     return []
 
 
+def _entry_is_html(entry: Any) -> bool:
+    return (
+        str(getattr(entry, "source", "text") or "text").strip().lower() == "html"
+        or bool(getattr(entry, "was_html", False))
+    )
+
+
 def _format_clipboard_entry_label(entry: Any) -> str:
     text = str(getattr(entry, "text", entry) or "")
-    was_html = bool(getattr(entry, "was_html", False))
+    was_html = _entry_is_html(entry)
     first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "(empty)")
     if len(first_line) > 48:
         first_line = first_line[:45] + "…"
-    tag = "HTML" if was_html else "Text"
+    tag = "HTML → MD" if was_html else "Text"
     return f"[{tag}] {first_line}"
 
 
@@ -136,6 +143,7 @@ class WelcomeView(Gtk.ScrolledWindow):
             Path(project_root) if project_root is not None else None
         )
         self._env_artifacts: list[Any] = []
+        self._env_scan_seq: int = 0
         self._env_scope_filter: str = "all"
         self._destroyed: bool = False
         self.connect("destroy", self._on_destroy)
@@ -276,7 +284,7 @@ class WelcomeView(Gtk.ScrolledWindow):
         else:
             for entry in entries[:10]:
                 text = str(getattr(entry, "text", entry) or "")
-                was_html = bool(getattr(entry, "was_html", False))
+                was_html = _entry_is_html(entry)
                 btn = Gtk.ModelButton()
                 btn.set_label(_format_clipboard_entry_label(entry))
                 btn.connect(
@@ -383,13 +391,38 @@ class WelcomeView(Gtk.ScrolledWindow):
         outer.pack_start(scrolled, False, False, 0)
 
     def _kickoff_env_scan(self) -> bool:
-        if not self._destroyed:
+        if not self._destroyed and self._env_scan_seq == 0:
             self.refresh_agentic_catalog(force_refresh=False)
         return False
+
+    def set_project_context(self, file_path: str | None) -> None:
+        """Update active project root and refresh catalog if changed."""
+        new_root: Path | None = None
+        if find_project_root is not None:
+            try:
+                new_root = find_project_root(file_path)
+            except Exception:
+                new_root = None
+        elif file_path:
+            new_root = Path(file_path).parent
+
+        if new_root != self._project_root:
+            self._env_scan_seq += 1
+            self._project_root = new_root
+            self.refresh_agentic_catalog(force_refresh=False)
+
+    def set_agentic_artifacts(self, artifacts: list[Any]) -> None:
+        """Directly supply artifacts and invalidate any in-flight async scan."""
+        self._env_scan_seq += 1
+        self._env_artifacts = list(artifacts)
+        self._render_welcome_env_list()
 
     def refresh_agentic_catalog(self, *, force_refresh: bool = False) -> None:
         if self._destroyed:
             return
+        self._env_scan_seq += 1
+        scan_seq = self._env_scan_seq
+
         if discover_agentic_catalog_async is None:
             self._welcome_env_placeholder.set_text("No agentic environments detected.")
             self._render_welcome_env_list()
@@ -406,9 +439,10 @@ class WelcomeView(Gtk.ScrolledWindow):
 
         def _on_catalog(catalog: Any) -> None:
             def _apply() -> bool:
-                if not self._destroyed:
-                    self._env_artifacts = _extract_catalog_artifacts(catalog)
-                    self._render_welcome_env_list()
+                if self._destroyed or scan_seq != self._env_scan_seq:
+                    return False
+                self._env_artifacts = _extract_catalog_artifacts(catalog)
+                self._render_welcome_env_list()
                 return False
 
             GLib.idle_add(_apply)
@@ -421,7 +455,10 @@ class WelcomeView(Gtk.ScrolledWindow):
                 force_refresh=force_refresh,
             )
         except Exception:
-            self._welcome_env_placeholder.set_text("No agentic environments detected.")
+            if scan_seq == self._env_scan_seq:
+                self._welcome_env_placeholder.set_text("No agentic environments detected.")
+
+    refresh_agentic_env = refresh_agentic_catalog
 
     def _on_env_scope_toggled(self, btn: Gtk.RadioButton, scope_key: str) -> None:
         if btn.get_active():
