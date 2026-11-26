@@ -320,11 +320,26 @@ notebook > header tabs tab button:hover {{
     margin: 4px 6px;
 }}
 
+list.context-metric-card {{
+    padding: 4px;
+    margin: 0;
+}}
+
+list.context-metric-card row {{
+    padding: 4px 6px;
+    border-radius: 4px;
+    color: {t.text};
+}}
+
+list.context-metric-card row:hover {{
+    background-color: {t.surface};
+}}
+
 .muted-label {{
     color: {t.muted};
 }}
 
-/* SearchBar & Entries */
+/* SearchBar, WatchBar, DiffBar, ClipboardBar & Entries */
 searchbar,
 searchbar > revealer > box,
 .search-bar {{
@@ -332,6 +347,35 @@ searchbar > revealer > box,
     border-bottom: 1px solid {t.border};
     padding: 5px 10px;
     color: {t.text};
+}}
+
+.search-bar button {{
+    background-color: {t.bg};
+    background-image: none;
+    color: {t.text};
+    border: 1px solid {t.border};
+    border-radius: 4px;
+    box-shadow: none;
+    padding: 3px 9px;
+}}
+
+.search-bar button:hover {{
+    background-color: {t.surface_alt};
+    border-color: {t.border_strong};
+}}
+
+.search-bar button:checked {{
+    background-color: {t.surface_alt};
+    border-color: {t.accent};
+    color: {t.accent};
+    font-weight: 600;
+}}
+
+.search-bar button.suggested-action {{
+    background-color: {t.accent};
+    border-color: {t.accent};
+    color: {t.accent_contrast};
+    font-weight: 600;
 }}
 
 entry {{
@@ -418,6 +462,31 @@ infobar button:hover {{
     color: {t.muted};
 }}
 
+.mdv-statusbar .doc-stats-label {{
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    margin-right: 0;
+    font-size: 1em;
+    color: {t.muted};
+}}
+
+.mdv-statusbar .zoom-controls button {{
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid transparent;
+    color: {t.muted};
+    padding: 1px 6px;
+    min-height: 20px;
+    box-shadow: none;
+}}
+
+.mdv-statusbar .zoom-controls button:hover {{
+    background-color: {t.surface_alt};
+    border-color: {t.border};
+    color: {t.text};
+}}
+
 .watch-badge {{
     color: {t.muted};
     background-color: {t.bg};
@@ -454,7 +523,14 @@ scrolledwindow.source-scrolled viewport {{
     background-color: {t.bg};
 }}
 
-/* GtkSourceView Editor */
+/* General TextViews (e.g., CommentEditorDialog) & GtkSourceView Editor */
+textview,
+textview text {{
+    background-color: {t.bg};
+    color: {t.text};
+    caret-color: {t.accent};
+}}
+
 textview.editor-source,
 textview.editor-source text {{
     background-color: {t.bg};
