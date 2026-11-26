@@ -23,23 +23,25 @@
 │   ├── __init__.py               # __app_name__, __cli_name__, __version__
 │   ├── app.py                    # Multi-tab GTK3 + WebKit2 studio window & shortcuts
 │   ├── tab.py                    # DocumentTab: preview/split/edit, Watch Mode, diff overlay, search
-│   ├── sidebar.py                # Collapsible sidebar: Outline, Context Inspector, Comments
+│   ├── sidebar.py                # Collapsible sidebar: Outline, Context Inspector, Comments, Agentic Env
 │   ├── dialogs.py                # WelcomeView, AskAgentDialog, DiffPicker, Preferences, Shortcuts
 │   ├── cli.py                    # Argparse CLI, stdin detection, LaunchOptions
 │   ├── config.py                 # Atomic XDG config.json (~/.config/markveil/) + legacy fallback
-│   ├── markdown_engine.py        # Code-first Markdown/math/Mermaid/technical-file renderer + CSP
+│   ├── markdown_engine.py        # Code-first Markdown/math/Mermaid/technical/source renderer + CSP
 │   ├── sanitizer.py              # HTMLParser allowlist sanitizer & remote image gate
-│   ├── themes.py                 # 4 editorial themes (Paper, Obsidian, Sepia, Nordic) + doc CSS
+│   ├── themes.py                 # 5 editorial themes (Folio, Paper, Obsidian, Sepia, Nordic) + doc CSS
 │   ├── gtk_styles.py             # Harmonized GTK3 chrome CSS + WebKit RGBA background helper
 │   ├── client_js.py              # Nonced client JS (Mermaid strict, KaTeX, copy, scroll, highlights)
-│   ├── context_inspector.py      # Heuristic token counts, section stats, SKILL.md metadata checks
+│   ├── agentic_env.py            # Offline global/project agentic discovery, classification & denylists
+│   ├── context_inspector.py      # Heuristic token counts, section stats, agentic artifact checks
 │   ├── diff_engine.py            # Line/word diffs, nearest-heading hunks, git HEAD diffing
-│   ├── review_comments.py        # Anchored ReviewSession & *.review.md Markdown export
-│   ├── agent_cli.py              # Non-blocking claude / codex / agy subprocess wrapper
-│   └── clipboard.py              # Smart clipboard I/O & HTMLParser HTML-to-Markdown converter
+│   ├── review_comments.py        # Anchored ReviewSession, *.review.md export & sidecar loading
+│   ├── agent_cli.py              # Non-blocking local CLI agent wrapper (9 CLIs, desktop PATH discovery)
+│   └── clipboard.py              # Smart clipboard I/O, bounded history & HTMLParser HTML-to-Markdown
 └── tests/
     ├── test_sanitizer.py         # Sanitizer allowlist, XSS, SVG/script stripping, image gate tests
-    ├── test_markdown_engine.py   # Fences, math, task lists, technical renderers, CSP nonce tests
+    ├── test_markdown_engine.py   # Fences, math, task lists, technical/source renderers, CSP nonce tests
+    ├── test_agentic_env.py       # Agentic env discovery, classification, denylists & cache tests
     ├── test_features.py          # Config, context inspector, diff, review comments, agent CLI, CLI tests
     └── test_gui_smoke.py         # Live GTK3 + WebKit2 multi-tab, Watch Mode, theme, quick/readonly tests
 ```
