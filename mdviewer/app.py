@@ -131,6 +131,7 @@ class MarkdownViewerApp(Gtk.Application):
     # ------------------------------------------------------------------
     def _build_window(self) -> None:
         win = Gtk.ApplicationWindow(application=self)
+        win.get_style_context().add_class("markveil-window")
         win.set_default_size(self.config.window_width, self.config.window_height)
         win.set_position(Gtk.WindowPosition.CENTER)
         icon_candidates = (
@@ -309,6 +310,7 @@ class MarkdownViewerApp(Gtk.Application):
 
     def _build_menu_popover(self, relative_to: Gtk.Widget) -> Gtk.Popover:
         pop = Gtk.Popover.new(relative_to)
+        pop.get_style_context().add_class("markveil-popover")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         box.set_margin_top(6)
         box.set_margin_bottom(6)
@@ -940,16 +942,12 @@ class MarkdownViewerApp(Gtk.Application):
         self.open_text_tab(text="# New Document\n\n", display_name="Untitled.md", mode="split")
 
     def action_open_file(self) -> None:
-        fc = Gtk.FileChooserDialog(
-            title="Open Markdown or Technical File",
-            transient_for=self.window,
-            action=Gtk.FileChooserAction.OPEN,
-        )
-        fc.add_buttons(
-            Gtk.STOCK_CANCEL,
-            Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_OPEN,
-            Gtk.ResponseType.ACCEPT,
+        fc = Gtk.FileChooserNative.new(
+            "Open Markdown or Technical File",
+            self.window,
+            Gtk.FileChooserAction.OPEN,
+            "_Open",
+            "_Cancel",
         )
         fc.set_select_multiple(True)
 
@@ -1011,16 +1009,12 @@ class MarkdownViewerApp(Gtk.Application):
     def _save_tab_as(self, tab: DocumentTab) -> bool:
         if tab.readonly:
             return False
-        fc = Gtk.FileChooserDialog(
-            title="Save Document As",
-            transient_for=self.window,
-            action=Gtk.FileChooserAction.SAVE,
-        )
-        fc.add_buttons(
-            Gtk.STOCK_CANCEL,
-            Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_SAVE,
-            Gtk.ResponseType.ACCEPT,
+        fc = Gtk.FileChooserNative.new(
+            "Save Document As",
+            self.window,
+            Gtk.FileChooserAction.SAVE,
+            "_Save",
+            "_Cancel",
         )
         fc.set_do_overwrite_confirmation(True)
         if tab.current_file:

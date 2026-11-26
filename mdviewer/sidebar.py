@@ -496,16 +496,12 @@ class DocumentSidebar(Gtk.Box):
             toplevel = None
 
         suggested = Path(default_review_path(self._current_file))
-        dialog = Gtk.FileChooserDialog(
-            title="Export Review Comments",
-            transient_for=toplevel,
-            action=Gtk.FileChooserAction.SAVE,
-        )
-        dialog.add_buttons(
-            Gtk.STOCK_CANCEL,
-            Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_SAVE,
-            Gtk.ResponseType.ACCEPT,
+        dialog = Gtk.FileChooserNative.new(
+            "Export Review Comments",
+            toplevel,
+            Gtk.FileChooserAction.SAVE,
+            "_Save",
+            "_Cancel",
         )
         dialog.set_do_overwrite_confirmation(True)
         if suggested.parent.is_dir():
