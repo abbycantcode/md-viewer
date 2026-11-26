@@ -1,11 +1,4 @@
-"""Minimal, native-respecting GTK3 chrome CSS, WebView background matching, and GtkSourceView schemes.
-
-Markveil leaves window chrome, HeaderBar, Notebook tabs, buttons, entries, and
-popovers to the user's active GTK3 desktop theme (Yaru, Adwaita, Obsidian-Glass,
-Catppuccin, Breeze, etc.) so there are no mismatched double-frames or theme clashes.
-Only subtle alpha-blended utility accents, editor typography/zoom, and the WebView
-preview container background (zero white flash) are styled here.
-"""
+"""Scoped Folio studio chrome, editor schemes, and WebKit background colors."""
 
 from __future__ import annotations
 
@@ -34,6 +27,7 @@ def get_gtksource_scheme_candidates(theme_id: str) -> tuple[str, ...]:
     """Return ordered GtkSourceView style scheme IDs best matching the theme."""
     resolved = resolve_theme_id(theme_id)
     candidates: dict[str, tuple[str, ...]] = {
+        "folio": ("markveil-folio", "classic"),
         "paper": ("Yaru", "Adwaita", "kate", "tango", "classic", "solarized-light"),
         "sepia": ("solarized-light", "Yaru", "tango", "classic", "kate"),
         "obsidian": ("Yaru-dark", "Adwaita-dark", "oblivion", "solarized-dark", "classic-dark"),
@@ -43,145 +37,165 @@ def get_gtksource_scheme_candidates(theme_id: str) -> tuple[str, ...]:
 
 
 def build_gtk_css(theme_id: str, zoom_level: float = 1.0) -> str:
-    """Build minimal GTK3 CSS that harmonizes with any system GTK3 theme."""
+    """Build application-scoped GTK3 chrome for the selected document palette."""
     t = THEMES[resolve_theme_id(theme_id)]
     clamped_zoom = max(0.5, min(3.0, float(zoom_level)))
     editor_pt = max(8, min(28, int(round(11 * clamped_zoom))))
 
-    return f"""\
-/* Markveil native-respecting GTK3 utilities (document theme: {t.id}) */
-
-.markveil-window headerbar.main-headerbar {{
-    min-height: 42px;
-    padding-left: 8px;
-    padding-right: 8px;
-}}
-
-.markveil-window stackswitcher.mode-switcher button {{
-    padding-left: 10px;
-    padding-right: 10px;
-    font-size: 0.88em;
-}}
-
-.markveil-window .sidebar-section-title {{
-    color: alpha(currentColor, 0.58);
-    font-size: 0.76em;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-}}
-
-.markveil-window .muted-label {{
-    color: alpha(currentColor, 0.65);
-}}
-
-.markveil-window .mdv-sidebar {{
-    border-right: 1px solid alpha(currentColor, 0.12);
-}}
-
-.markveil-window .mdv-sidebar list row {{
-    padding: 5px 10px;
-    border-radius: 5px;
-    margin: 1px 4px;
-}}
-
-.markveil-window .mdv-sidebar list row.outline-row-active {{
-    background-color: alpha(currentColor, 0.08);
-    border-left: 2px solid {t.accent};
-    font-weight: 600;
-}}
-
-.markveil-window .review-comment-card,
-.markveil-window .context-metric-card {{
-    background-color: alpha(currentColor, 0.04);
-    border: 1px solid alpha(currentColor, 0.12);
-    border-radius: 6px;
-    padding: 8px 10px;
-    margin: 4px 6px;
-}}
-
-.markveil-window list.context-metric-card {{
-    padding: 4px;
-    margin: 0;
-}}
-
-.markveil-window list.context-metric-card row {{
-    padding: 4px 6px;
-    border-radius: 4px;
-}}
-
-.markveil-window .search-bar {{
-    border-bottom: 1px solid alpha(currentColor, 0.12);
-    padding: 5px 10px;
-}}
-
-.markveil-window .search-match-label {{
-    color: alpha(currentColor, 0.65);
-    font-size: 0.82em;
-    padding: 0 6px;
-}}
-
-.markveil-window .mdv-statusbar {{
-    border-top: 1px solid alpha(currentColor, 0.12);
-    padding: 3px 12px;
-    font-size: 0.8em;
-}}
-
-.markveil-window .mdv-statusbar label {{
-    color: alpha(currentColor, 0.7);
-}}
-
-.markveil-window .mdv-statusbar .zoom-controls button {{
-    padding: 1px 6px;
-    min-height: 20px;
-}}
-
-.markveil-window .watch-badge {{
-    color: alpha(currentColor, 0.72);
-    border: 1px solid alpha(currentColor, 0.18);
-    border-radius: 4px;
-    padding: 1px 7px;
-    font-size: 0.78em;
-    font-weight: 600;
-}}
-
-.markveil-window .watch-badge.active {{
-    color: {t.valid_fg};
-    background-color: {t.valid_bg};
-    border-color: {t.valid_border};
-}}
-
-.markveil-window .readonly-badge {{
-    color: {t.warning_fg};
-    background-color: {t.warning_bg};
-    border: 1px solid alpha(currentColor, 0.18);
-    border-radius: 4px;
-    padding: 1px 7px;
-    font-size: 0.78em;
-    font-weight: 600;
-}}
-
-/* Match WebKit2 preview container background to document theme (zero white flash) */
-.markveil-window scrolledwindow.preview-scrolled,
-.markveil-window scrolledwindow.preview-scrolled viewport {{
+    return f"""
+.markveil-window, .markveil-window .main-root {{
     background-color: {t.bg};
+    color: {t.text};
+    font-family: "IBM Plex Sans", "Cantarell", sans-serif;
 }}
-
-/* GtkSourceView editor typography and zoom */
-.markveil-window textview.editor-source,
-.markveil-window textview.editor-source text {{
-    font-family: "JetBrains Mono", "IBM Plex Mono", "Fira Code", "Ubuntu Mono", "Cascadia Code", "Source Code Pro", monospace;
+.markveil-window button, .markveil-popover button {{
+    background: {t.surface}; color: {t.text};
+    border: 1px solid {t.border}; border-radius: 4px; box-shadow: none; text-shadow: none;
+}}
+.markveil-window button:hover, .markveil-popover button:hover {{ background: {t.surface_alt}; }}
+.markveil-window button:checked {{ background: {t.selection_bg}; color: {t.selection_text}; }}
+.markveil-window button:disabled {{ color: {t.muted}; opacity: 0.65; }}
+.markveil-window button label, .markveil-window button image,
+.markveil-window row:selected label, .markveil-window row:selected image,
+.markveil-popover button label {{ color: inherit; }}
+.markveil-window entry, .markveil-window textview:not(.editor-source) text {{
+    background: {t.bg}; color: {t.text}; caret-color: {t.text};
+}}
+.markveil-window entry {{ border: 1px solid {t.border_strong}; box-shadow: none; }}
+.markveil-window entry placeholder {{ color: {t.muted}; }}
+.markveil-window entry:focus {{ border-color: {t.accent}; }}
+.markveil-window switch {{ background: {t.border_strong}; border: none; }}
+.markveil-window switch:checked {{ background: {t.accent}; }}
+.markveil-window switch slider {{ background: {t.bg}; border: 1px solid {t.border_strong}; }}
+.markveil-window .sidebar-header stackswitcher {{ background: transparent; box-shadow: none; }}
+.markveil-window .workspace-location {{
+    color: {t.muted}; border-top: 1px solid {t.border}; padding: 10px 16px; font-size: 0.9em;
+}}
+.markveil-popover, .markveil-popover.background {{ background: {t.bg}; color: {t.text}; }}
+.markveil-popover button {{ border: none; background: transparent; }}
+.markveil-popover modelbutton, .markveil-popover modelbutton label,
+.markveil-window headerbar.main-headerbar .markveil-popover button,
+.markveil-window headerbar.main-headerbar .markveil-popover button label {{
+    color: {t.text}; background: transparent; text-shadow: none;
+}}
+.markveil-popover modelbutton:hover,
+.markveil-window headerbar.main-headerbar .markveil-popover button:hover {{
+    background: {t.surface_alt};
+}}
+.markveil-popover .muted-label {{ color: {t.muted}; }}
+.markveil-window headerbar.main-headerbar {{
+    background-image: none;
+    background-color: #253f32;
+    color: #f5f6e6;
+    border: none;
+    box-shadow: none;
+    padding: 5px 12px;
+    min-height: 42px;
+}}
+.markveil-window headerbar .wordmark, .markveil-window .welcome-title {{
+    font-family: "Bitstream Charter", Georgia, serif;
+    font-size: 23px;
+    font-weight: bold;
+}}
+.markveil-window .welcome-title {{ font-size: 36px; font-weight: normal; }}
+.markveil-window headerbar .location {{ color: #dce6d5; font-size: 0.92em; }}
+.markveil-window headerbar.main-headerbar button,
+.markveil-window .mdv-sidebar button,
+.markveil-window .mdv-statusbar button,
+.markveil-window .search-bar button,
+.markveil-window .document-close {{
+    background-image: none;
+    background-color: transparent;
+    color: inherit;
+    border: none;
+    box-shadow: none;
+    text-shadow: none;
+    border-radius: 4px;
+    min-height: 24px;
+    min-width: 18px;
+    padding: 3px 6px;
+}}
+.markveil-window headerbar.main-headerbar button {{ color: #f5f6e6; }}
+.markveil-window headerbar.main-headerbar button:disabled {{ color: #9aae9d; }}
+.markveil-window headerbar.main-headerbar button:hover,
+.markveil-window headerbar.main-headerbar button:checked {{ background-color: #3a5544; }}
+.markveil-window headerbar.main-headerbar button.suggested-action {{ background-color: #dae5bd; color: #253f32; }}
+.markveil-window headerbar.main-headerbar .mode-switcher {{
+    background-color: #395343;
+    padding: 3px;
+    border-radius: 6px;
+}}
+.markveil-window headerbar.main-headerbar .mode-switcher button {{ padding: 2px 10px; }}
+.markveil-window headerbar.main-headerbar .mode-switcher button:checked {{
+    background-color: #f5f6e6;
+    color: #253f32;
+}}
+.markveil-window .mdv-sidebar, .markveil-window .mdv-statusbar,
+.markveil-window .search-bar {{ background-color: {t.surface}; color: {t.text}; }}
+.markveil-window .mdv-sidebar list, .markveil-window .mdv-sidebar viewport,
+.markveil-window .context-metric-card, .markveil-window .preview-scrolled viewport {{
+    background-color: transparent; color: {t.text};
+}}
+.markveil-window .mdv-sidebar list {{ padding: 0 10px; }}
+.markveil-window .mdv-sidebar list row {{
+    padding: 3px 8px;
+    border-radius: 3px;
+    color: {t.muted};
+    min-height: 24px;
+}}
+.markveil-window .mdv-sidebar row:hover,
+.markveil-window .mdv-sidebar button:hover, .markveil-window .search-bar button:hover,
+.markveil-window .mdv-statusbar button:hover {{ background-color: {t.surface_alt}; }}
+.markveil-window .mdv-sidebar list row:selected,
+.markveil-window .mdv-sidebar list row.outline-row-active,
+.markveil-window .sidebar-header button:checked, .markveil-window .search-bar button:checked {{
+    background-color: {t.selection_bg}; color: {t.selection_text};
+}}
+.markveil-window .open-documents row:selected {{ font-weight: bold; }}
+.markveil-window .mdv-sidebar list row:selected label,
+.markveil-window .mdv-sidebar list row:selected image {{ color: {t.selection_text}; }}
+.markveil-window .mdv-sidebar stackswitcher button image {{ color: {t.text}; }}
+.markveil-window .mdv-sidebar .document-close, .markveil-window .mdv-sidebar .anchor-copy {{
+    padding: 1px 3px; min-width: 16px; min-height: 19px; opacity: 0;
+}}
+.markveil-window .mdv-sidebar row:hover button, .markveil-window .mdv-sidebar row:focus button,
+.markveil-window .mdv-sidebar button:focus {{ opacity: 1; }}
+.markveil-window .rail-title {{
+    padding: 15px 18px 8px; font-size: 0.9em; font-weight: bold; color: {t.muted};
+}}
+.markveil-window .sidebar-header {{
+    margin: 16px 12px 0; padding: 10px 0 0; border-top: 1px solid {t.border};
+}}
+.markveil-window .sidebar-header button {{ padding: 4px 11px; }}
+.markveil-window .sidebar-section-title {{ font-weight: bold; font-size: 0.92em; color: {t.heading}; }}
+.markveil-window .muted-label, .markveil-window .search-match-label {{ color: {t.muted}; }}
+.markveil-window .review-comment-card, .markveil-window .context-metric-card {{
+    padding: 8px 6px; margin: 1px 10px; border-bottom: 1px solid {t.border};
+}}
+.markveil-window .search-bar {{ padding: 5px 10px; border-bottom: 1px solid {t.border}; }}
+.markveil-window .mdv-statusbar {{
+    border-top: 1px solid {t.border}; padding: 1px 12px; font-size: 0.85em; color: {t.muted};
+}}
+.markveil-window .mdv-statusbar button {{ min-height: 19px; padding: 1px 5px; }}
+.markveil-window .watch-badge.active {{ color: {t.accent}; font-weight: bold; }}
+.markveil-window .readonly-badge {{ color: {t.warning_fg}; background: {t.warning_bg}; padding: 0 5px; }}
+.markveil-window paned > separator {{ min-width: 1px; background: {t.border}; }}
+.markveil-window notebook > header {{ background: {t.surface}; border: 0; }}
+.markveil-window notebook > header tab {{ background: transparent; color: {t.muted}; }}
+.markveil-window notebook > header tab:checked {{ color: {t.heading}; box-shadow: inset 0 -2px {t.accent}; }}
+.markveil-window .preview-scrolled {{ background-color: {t.bg}; }}
+.markveil-window textview.editor-source, .markveil-window textview.editor-source text {{
+    font-family: "IBM Plex Mono", "Ubuntu Mono", monospace;
     font-size: {editor_pt}pt;
 }}
-
-/* Token budget progress bars */
-.markveil-window progressbar trough {{
-    border-radius: 3px;
-    min-height: 6px;
+.markveil-window progressbar trough {{ background: {t.surface_alt}; min-height: 4px; border: 0; }}
+.markveil-window progressbar progress {{ background: {t.accent}; min-height: 4px; border: 0; }}
+.markveil-window button:focus, .markveil-window row:focus {{
+    outline-style: solid; outline-width: 1px; outline-offset: -2px; outline-color: {t.accent};
 }}
-
-.markveil-window progressbar progress {{
-    background-color: {t.accent};
-    border-radius: 3px;
-    min-height: 6px;
+.markveil-window headerbar.main-headerbar button:focus {{ outline-color: #a5ba8f; }}
+.markveil-window .preview-scrolled button.suggested-action,
+dialog.markveil-window button.suggested-action {{
+    background: {t.accent}; color: {t.accent_contrast}; border: none; box-shadow: none;
 }}
 """
