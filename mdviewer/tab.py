@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 import json
+import re
+import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
@@ -33,13 +37,48 @@ from mdviewer.markdown_engine import (  # noqa: E402
     render_document,
     toggle_task_checkbox_in_text,
 )
-from mdviewer.review_comments import ReviewComment, ReviewSession  # noqa: E402
+from mdviewer.review_comments import (  # noqa: E402
+    ReviewComment,
+    ReviewSession,
+    default_review_path,
+)
+
+# Defensive cross-track imports (work standalone and after parallel tracks merge)
+try:
+    from mdviewer.agentic_env import (  # noqa: E402
+        classify_agentic_file,
+        find_project_root,
+    )
+except ImportError:  # pragma: no cover
+    classify_agentic_file = None  # type: ignore[assignment]
+    find_project_root = None  # type: ignore[assignment]
+
+try:
+    from mdviewer.markdown_engine import is_supported_local_file as _engine_is_supported_local_file  # noqa: E402
+except ImportError:  # pragma: no cover
+    _engine_is_supported_local_file = None  # type: ignore[assignment]
+
+try:
+    from mdviewer.review_comments import find_sidecar_review_path  # noqa: E402
+except ImportError:  # pragma: no cover
+    find_sidecar_review_path = None  # type: ignore[assignment]
+
+try:
+    from mdviewer.clipboard import get_clipboard_history as _clipboard_history_getter  # noqa: E402
+except ImportError:  # pragma: no cover
+    _clipboard_history_getter = None  # type: ignore[assignment]
+
+_RENDER_ACCEPTS_AGENTIC_META: bool = (
+    "agentic_meta" in inspect.signature(render_document).parameters
+)
 
 _MAX_REVISIONS = 25
 _WATCH_DEBOUNCE_MS = 150
 _SPLIT_DEBOUNCE_MS = 180
 
-_SUPPORTED_LOCAL_SUFFIXES = frozenset(
+_LINE_ANCHOR_RE = re.compile(r"^L(\d+)(?:-L?(\d+))?$", re.IGNORECASE)
+
+_FALLBACK_LOCAL_SUFFIXES = frozenset(
     {
         ".md",
         ".markdown",
@@ -56,8 +95,164 @@ _SUPPORTED_LOCAL_SUFFIXES = frozenset(
         ".mmd",
         ".mermaid",
         ".txt",
+        ".py",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".rs",
+        ".go",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".css",
+        ".html",
+        ".xml",
+        ".sql",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".mdc",
+        ".rules",
+        ".cursorrules",
     }
 )
+
+_FALLBACK_EXTENSIONLESS_NAMES = frozenset(
+    {
+        "makefile",
+        "dockerfile",
+        "license",
+        "readme",
+        "changelog",
+        "procfile",
+        "justfile",
+        "gemfile",
+        "rakefile",
+        ".cursorrules",
+    }
+)
+
+_DESTRUCTIVE_CONTEXT_ACTIONS = frozenset(
+    action
+    for name in (
+        "RELOAD",
+        "GO_BACK",
+        "GO_FORWARD",
+        "STOP",
+        "OPEN_LINK_IN_NEW_WINDOW",
+        "DOWNLOAD_LINK_TO_DISK",
+        "OPEN_IMAGE_IN_NEW_WINDOW",
+        "OPEN_FRAME_IN_NEW_WINDOW",
+    )
+    if (action := getattr(WebKit2.ContextMenuAction, name, None)) is not None
+)
+
+
+@dataclass(frozen=True)
+class _FallbackClipboardEntry:
+    text: str
+    was_html: bool = False
+    timestamp: float = 0.0
+
+
+class _FallbackClipboardHistory:
+    def __init__(self, max_entries: int = 12) -> None:
+        self._max = max_entries
+        self._entries: list[_FallbackClipboardEntry] = []
+
+    def record(self, text: str, was_html: bool = False) -> None:
+        if not text:
+            return
+        self._entries = [e for e in self._entries if e.text != text]
+        self._entries.insert(
+            0, _FallbackClipboardEntry(text=text, was_html=was_html, timestamp=time.time())
+        )
+        if len(self._entries) > self._max:
+            self._entries = self._entries[: self._max]
+
+    def entries(self) -> list[_FallbackClipboardEntry]:
+        return list(self._entries)
+
+    def latest(self) -> _FallbackClipboardEntry | None:
+        return self._entries[0] if self._entries else None
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
+_FALLBACK_CLIPBOARD_HISTORY = _FallbackClipboardHistory()
+
+
+def _get_clipboard_history() -> Any:
+    if _clipboard_history_getter is not None:
+        return _clipboard_history_getter()
+    return _FALLBACK_CLIPBOARD_HISTORY
+
+
+def _record_clipboard_history(text: str, was_html: bool = False) -> None:
+    if not text:
+        return
+    hist = _get_clipboard_history()
+    try:
+        hist.record(text, was_html=was_html)
+    except TypeError:
+        try:
+            hist.record(text, was_html)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _list_clipboard_history() -> list[Any]:
+    hist = _get_clipboard_history()
+    try:
+        raw = hist.entries() if callable(getattr(hist, "entries", None)) else getattr(hist, "entries", [])
+        return list(raw)
+    except Exception:
+        return []
+
+
+def _clear_clipboard_history() -> None:
+    hist = _get_clipboard_history()
+    try:
+        hist.clear()
+    except Exception:
+        pass
+
+
+def _is_supported_local_target(path: Path) -> bool:
+    if _engine_is_supported_local_file is not None:
+        try:
+            if _engine_is_supported_local_file(path):
+                return True
+        except Exception:
+            pass
+    if path.suffix.lower() in _FALLBACK_LOCAL_SUFFIXES:
+        return True
+    if path.name.lower() in _FALLBACK_EXTENSIONLESS_NAMES:
+        return True
+    return False
+
+
+def _parse_line_anchor(fragment: str | None) -> tuple[int, int | None] | None:
+    if not fragment:
+        return None
+    m = _LINE_ANCHOR_RE.match(fragment.strip())
+    if not m:
+        return None
+    start = int(m.group(1))
+    end = int(m.group(2)) if m.group(2) else None
+    if start < 1:
+        return None
+    if end is not None and end < start:
+        end = start
+    return (start, end)
 
 
 def _file_uri_to_path(uri: str) -> str:
@@ -92,11 +287,14 @@ class DocumentTab(Gtk.Box):
         initial_line: int | None = None,
         initial_section: str | None = None,
         on_state_changed: Callable[[DocumentTab], None] | None = None,
+        on_cursor_changed: Callable[[DocumentTab], None] | None = None,
         on_open_file_request: Callable[[str, bool, str | None], None] | None = None,
         on_always_allow_remote: Callable[[], None] | None = None,
         on_save_as_request: Callable[[DocumentTab], None] | None = None,
         on_comment_added: Callable[[DocumentTab], None] | None = None,
         on_status_message: Callable[[str], None] | None = None,
+        on_confirm_leave: Callable[[DocumentTab], bool] | None = None,
+        on_file_navigated: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
@@ -126,10 +324,13 @@ class DocumentTab(Gtk.Box):
         self.last_render_result: RenderResult | None = None
         self.context_report: DocumentContextReport | None = None
         self.review_session: ReviewSession = ReviewSession()
+        self._local_comments_dirty: bool = False
         self.active_heading_slug: str = ""
         self.scroll_ratio: float = 0.0
         self.cursor_line: int = 1
         self.cursor_col: int = 1
+        self.render_count: int = 0
+        self._agentic_meta: dict[str, Any] | None = None
 
         # Link navigation history
         self.history_back: list[str] = []
@@ -161,15 +362,20 @@ class DocumentTab(Gtk.Box):
         self._split_debounce_id: int = 0
         self._expected_base_uri: str = "about:blank"
         self._replace_mode: bool = False
+        self._pending_split_ratio: bool = False
         self._cleaned_up: bool = False
+        self._ctx_comment_action: Gio.SimpleAction | None = None
 
         # Callbacks
         self._on_state_changed = on_state_changed
+        self._on_cursor_changed = on_cursor_changed
         self._on_open_file_request = on_open_file_request
         self._on_always_allow_remote = on_always_allow_remote
         self._on_save_as_request = on_save_as_request
         self._on_comment_added = on_comment_added
         self._on_status_message = on_status_message
+        self._on_confirm_leave = on_confirm_leave
+        self._on_file_navigated = on_file_navigated
 
         # Build UI components
         self._build_infobars()
@@ -191,17 +397,28 @@ class DocumentTab(Gtk.Box):
         self._record_revision(text)
         self._set_buffer_text(text, mark_clean=True)
         self._configure_source_language()
+        self._refresh_agentic_meta()
+        self._load_sidecar_reviews()
         self.apply_theme(self.theme_id, rerender=False)
         self.set_zoom_level(self.zoom_level)
 
+        # Configure pane visibility without triggering a redundant render,
+        # then perform the single initial preview render.
+        self.set_view_mode(self.view_mode, rerender=False, notify=False)
+
+        line_range = _parse_line_anchor(initial_section)
+        effective_section = None if line_range else initial_section
         self.render_preview(
             initial_scroll_ratio=0.0,
-            initial_section=initial_section,
+            initial_section=effective_section,
         )
-        self.set_view_mode(self.view_mode)
 
-        if initial_line is not None and initial_line > 0:
+        if line_range is not None:
+            self.jump_to_line(line_range[0])
+            GLib.timeout_add(120, self._deferred_scroll_to_line, line_range[0], line_range[1])
+        elif initial_line is not None and initial_line > 0:
             self.jump_to_line(initial_line)
+            GLib.timeout_add(120, self._deferred_scroll_to_line, initial_line, None)
 
         if watch_enabled and self.current_file:
             self.set_watch_enabled(True)
@@ -272,8 +489,14 @@ class DocumentTab(Gtk.Box):
             if was_html
             else "Clipboard Studio · Plain text"
         )
+        self._clipboard_status_lbl.set_xalign(0.0)
         self._clipboard_status_lbl.get_style_context().add_class("muted-label")
         self._clipboard_bar.pack_start(self._clipboard_status_lbl, True, True, 0)
+
+        refresh_btn = Gtk.Button(label="Refresh")
+        refresh_btn.set_tooltip_text("Read current system clipboard")
+        refresh_btn.connect("clicked", lambda _b: self.paste_from_clipboard(True))
+        self._clipboard_bar.pack_start(refresh_btn, False, False, 0)
 
         paste_html_btn = Gtk.Button(label="Paste HTML→MD")
         paste_html_btn.connect("clicked", lambda _b: self.paste_from_clipboard(True))
@@ -282,6 +505,14 @@ class DocumentTab(Gtk.Box):
         paste_plain_btn = Gtk.Button(label="Paste Plain")
         paste_plain_btn.connect("clicked", lambda _b: self.paste_from_clipboard(False))
         self._clipboard_bar.pack_start(paste_plain_btn, False, False, 0)
+
+        self._clip_history_btn = Gtk.MenuButton(label="History ▾")
+        self._clip_history_btn.set_tooltip_text("Switch between recent clipboard captures")
+        self._clip_history_popover = self._build_clipboard_history_popover(
+            self._clip_history_btn
+        )
+        self._clip_history_btn.set_popover(self._clip_history_popover)
+        self._clipboard_bar.pack_start(self._clip_history_btn, False, False, 0)
 
         copy_md_btn = Gtk.Button(label="Copy Markdown")
         copy_md_btn.connect("clicked", self._on_copy_markdown_clicked)
@@ -297,6 +528,73 @@ class DocumentTab(Gtk.Box):
         if not self.clipboard_mode:
             self._clipboard_bar.hide()
         self.pack_start(self._clipboard_bar, False, False, 0)
+
+    def _build_clipboard_history_popover(self, relative_to: Gtk.Widget) -> Gtk.Popover:
+        pop = Gtk.Popover.new(relative_to)
+        pop.get_style_context().add_class("markveil-popover")
+        self._clip_history_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self._clip_history_box.set_margin_top(6)
+        self._clip_history_box.set_margin_bottom(6)
+        self._clip_history_box.set_margin_start(6)
+        self._clip_history_box.set_margin_end(6)
+        self._clip_history_box.set_size_request(260, -1)
+        pop.add(self._clip_history_box)
+        pop.connect("show", self._refresh_clipboard_history_popover)
+        return pop
+
+    def _refresh_clipboard_history_popover(self, _pop: Gtk.Popover) -> None:
+        for child in list(self._clip_history_box.get_children()):
+            self._clip_history_box.remove(child)
+
+        entries = _list_clipboard_history()
+        if not entries:
+            lbl = Gtk.Label(label="No clipboard captures yet.")
+            lbl.get_style_context().add_class("muted-label")
+            lbl.set_xalign(0.0)
+            lbl.set_margin_start(6)
+            lbl.set_margin_end(6)
+            lbl.set_margin_top(4)
+            lbl.set_margin_bottom(4)
+            self._clip_history_box.pack_start(lbl, False, False, 0)
+        else:
+            for entry in entries[:10]:
+                text = str(getattr(entry, "text", entry) or "")
+                was_html = bool(getattr(entry, "was_html", False))
+                first_line = next(
+                    (ln.strip() for ln in text.splitlines() if ln.strip()),
+                    "(empty)",
+                )
+                if len(first_line) > 46:
+                    first_line = first_line[:43] + "…"
+                tag = "HTML" if was_html else "Text"
+                btn = Gtk.ModelButton()
+                btn.set_label(f"[{tag}] {first_line}")
+                btn.connect(
+                    "clicked",
+                    lambda _b, t=text, h=was_html: (
+                        self._clip_history_popover.popdown(),
+                        self.load_clipboard_payload(t, h, record_history=False),
+                    ),
+                )
+                self._clip_history_box.pack_start(btn, False, False, 0)
+
+            sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+            sep.set_margin_top(3)
+            sep.set_margin_bottom(3)
+            self._clip_history_box.pack_start(sep, False, False, 0)
+
+            clear_btn = Gtk.ModelButton()
+            clear_btn.set_label("Clear History")
+            clear_btn.connect(
+                "clicked",
+                lambda _b: (
+                    self._clip_history_popover.popdown(),
+                    _clear_clipboard_history(),
+                ),
+            )
+            self._clip_history_box.pack_start(clear_btn, False, False, 0)
+
+        self._clip_history_box.show_all()
 
     def _build_watch_bar(self) -> None:
         self._watch_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -432,6 +730,7 @@ class DocumentTab(Gtk.Box):
     def _build_editor_and_preview(self) -> None:
         self._paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         self._paned.connect("notify::position", self._on_paned_position_changed)
+        self._paned.connect("size-allocate", self._on_paned_size_allocate)
 
         # Source editor (GtkSourceView)
         self.source_buffer = GtkSource.Buffer()
@@ -493,6 +792,7 @@ class DocumentTab(Gtk.Box):
             settings.set_enable_write_console_messages_to_stdout(False)
 
         self.webview.connect("decide-policy", self._on_decide_policy)
+        self.webview.connect("context-menu", self._on_webview_context_menu)
 
         self._find_controller = self.webview.get_find_controller()
         self._find_controller.connect("counted-matches", self._on_webkit_counted_matches)
@@ -513,9 +813,88 @@ class DocumentTab(Gtk.Box):
         self._paned.pack2(self._preview_scrolled, True, False)
         self.pack_start(self._paned, True, True, 0)
 
+    def _on_webview_context_menu(
+        self,
+        _webview: WebKit2.WebView,
+        context_menu: WebKit2.ContextMenu,
+        _event: Gdk.Event,
+        _hit_test: WebKit2.HitTestResult,
+    ) -> bool:
+        """Strip destructive browser navigation items and add 'Add Review Comment'."""
+        for item in list(context_menu.get_items()):
+            if item.get_stock_action() in _DESTRUCTIVE_CONTEXT_ACTIONS:
+                context_menu.remove(item)
+
+        if context_menu.get_n_items() > 0:
+            context_menu.append(WebKit2.ContextMenuItem.new_separator())
+
+        action = Gio.SimpleAction.new("add-review-comment", None)
+        action.connect("activate", lambda _a, _p: self.request_add_comment())
+        self._ctx_comment_action = action
+        comment_item = WebKit2.ContextMenuItem.new_from_gaction(
+            action, "Add Review Comment", None
+        )
+        context_menu.append(comment_item)
+        return False
+
     # ------------------------------------------------------------------
-    # Document Text, Loading, and Saving
+    # Document Text, Loading, Agentic Metadata, Sidecar Reviews, and Saving
     # ------------------------------------------------------------------
+    def _refresh_agentic_meta(self) -> None:
+        self._agentic_meta = None
+        if not self.current_file or classify_agentic_file is None:
+            return
+        try:
+            proj = find_project_root(self.current_file) if find_project_root is not None else None
+            artifact = classify_agentic_file(self.current_file, project_root=proj)
+            if artifact is not None and hasattr(artifact, "to_banner_dict"):
+                self._agentic_meta = artifact.to_banner_dict()
+        except Exception:
+            self._agentic_meta = None
+
+    def _load_sidecar_reviews(self) -> None:
+        if not self.current_file:
+            return
+        if self.current_file.endswith(".review.md"):
+            return
+        sidecar: Path | None = None
+        if find_sidecar_review_path is not None:
+            try:
+                found = find_sidecar_review_path(self.current_file)
+                sidecar = Path(found) if found else None
+            except Exception:
+                sidecar = None
+        else:
+            candidate = Path(default_review_path(self.current_file))
+            if candidate.is_file():
+                sidecar = candidate
+
+        if sidecar is None or not sidecar.is_file():
+            return
+        if not hasattr(self.review_session, "load_from_sidecar"):
+            return
+        try:
+            self.review_session.load_from_sidecar(str(sidecar))
+            count = len(self.review_session)
+            self._local_comments_dirty = False
+            if count > 0 and self._on_status_message:
+                noun = "comment" if count == 1 else "comments"
+                self._on_status_message(
+                    f"Loaded {count} review {noun} from {sidecar.name}"
+                )
+        except Exception:
+            pass
+
+    def has_unexported_comments(self) -> bool:
+        if hasattr(self.review_session, "has_unexported_changes"):
+            return bool(self.review_session.has_unexported_changes)
+        return bool(self._local_comments_dirty and len(self.review_session) > 0)
+
+    def mark_comments_exported(self) -> None:
+        if hasattr(self.review_session, "mark_exported"):
+            self.review_session.mark_exported()
+        self._local_comments_dirty = False
+
     def get_text(self) -> str:
         return self.source_buffer.get_text(
             self.source_buffer.get_start_iter(),
@@ -587,6 +966,7 @@ class DocumentTab(Gtk.Box):
         self._conflict_infobar.hide()
         self._record_revision(text)
         self._configure_source_language()
+        self._refresh_agentic_meta()
 
         if self.clipboard_mode:
             self.clipboard_mode = False
@@ -612,6 +992,7 @@ class DocumentTab(Gtk.Box):
         self._conflict_infobar.hide()
         self._set_buffer_text(disk_text, mark_clean=True)
         self._record_revision(disk_text)
+        self._refresh_agentic_meta()
         self.pending_updates = 0
         self._update_watch_bar()
 
@@ -647,18 +1028,22 @@ class DocumentTab(Gtk.Box):
         text = self.get_text()
         ratio = self.scroll_ratio if initial_scroll_ratio is None else initial_scroll_ratio
 
-        result = render_document(
-            text,
-            file_path=self.current_file,
-            theme=self.theme_id,
-            allow_remote_images=self.allow_remote_images,
-            custom_css=self.custom_css,
-            changed_lines=changed_lines,
-            vim_enabled=self.vim_enabled,
-            initial_scroll_ratio=ratio,
-            initial_section=initial_section,
-            follow_changed=follow_changed,
-        )
+        render_kwargs: dict[str, Any] = {
+            "file_path": self.current_file,
+            "theme": self.theme_id,
+            "allow_remote_images": self.allow_remote_images,
+            "custom_css": self.custom_css,
+            "changed_lines": changed_lines,
+            "vim_enabled": self.vim_enabled,
+            "initial_scroll_ratio": ratio,
+            "initial_section": initial_section,
+            "follow_changed": follow_changed,
+        }
+        if _RENDER_ACCEPTS_AGENTIC_META and self._agentic_meta is not None:
+            render_kwargs["agentic_meta"] = self._agentic_meta
+
+        result = render_document(text, **render_kwargs)
+        self.render_count += 1
         self.last_render_result = result
         self.headings = list(result.headings)
         self.context_report = analyze_document(text, file_path=self.current_file)
@@ -696,16 +1081,20 @@ class DocumentTab(Gtk.Box):
                 break
 
         if rerender:
-            if self.diff_active and self._diff_regen_fn is not None:
-                report = self._diff_regen_fn(self._diff_mode)
-                self.show_diff_report(
-                    report,
-                    self._diff_source_kind,
-                    mode=self._diff_mode,
-                    regenerate_fn=self._diff_regen_fn,
-                )
-            else:
-                self.render_preview(initial_scroll_ratio=self.scroll_ratio)
+            self.rerender_active_view()
+
+    def rerender_active_view(self) -> None:
+        """Re-render either the active diff overlay or the document preview once."""
+        if self.diff_active and self._diff_regen_fn is not None:
+            report = self._diff_regen_fn(self._diff_mode)
+            self.show_diff_report(
+                report,
+                self._diff_source_kind,
+                mode=self._diff_mode,
+                regenerate_fn=self._diff_regen_fn,
+            )
+        else:
+            self.render_preview(initial_scroll_ratio=self.scroll_ratio)
 
     def apply_preferences(
         self,
@@ -713,7 +1102,8 @@ class DocumentTab(Gtk.Box):
         vim_enabled: bool,
         allow_remote_images: bool,
         custom_css: str,
-    ) -> None:
+        rerender: bool = True,
+    ) -> bool:
         changed = (
             self.vim_enabled != vim_enabled
             or self.allow_remote_images != allow_remote_images
@@ -722,18 +1112,26 @@ class DocumentTab(Gtk.Box):
         self.vim_enabled = vim_enabled
         self.allow_remote_images = allow_remote_images
         self.custom_css = custom_css
-        if changed and not self.diff_active:
+        if changed and rerender and not self.diff_active:
             self.render_preview(initial_scroll_ratio=self.scroll_ratio)
+        return changed
 
     def set_zoom_level(self, zoom: float) -> None:
         self.zoom_level = max(0.5, min(3.0, float(zoom)))
         self.webview.set_zoom_level(self.zoom_level)
 
-    def set_view_mode(self, mode: str) -> None:
+    def set_view_mode(
+        self,
+        mode: str,
+        *,
+        rerender: bool = True,
+        notify: bool = True,
+    ) -> None:
         if mode not in ("preview", "split", "edit"):
             return
         if self.readonly and mode != "preview":
             mode = "preview"
+        prev_mode = self.view_mode
         self.view_mode = mode
 
         if self.diff_active:
@@ -742,16 +1140,23 @@ class DocumentTab(Gtk.Box):
             self._preview_scrolled.show()
             return
 
+        should_render = rerender and (
+            prev_mode != mode or self.last_render_result is None
+        )
+
         if mode == "preview":
             self._source_scrolled.hide()
             self._preview_scrolled.show_all()
             self._preview_scrolled.show()
             self._replace_row.hide()
-            self.render_preview(initial_scroll_ratio=self.scroll_ratio)
+            self._pending_split_ratio = False
+            if should_render:
+                self.render_preview(initial_scroll_ratio=self.scroll_ratio)
         elif mode == "edit":
             self._preview_scrolled.hide()
             self._source_scrolled.show_all()
             self._source_scrolled.show()
+            self._pending_split_ratio = False
             if self._replace_mode and not self.readonly:
                 self._replace_row.show_all()
                 self._replace_row.show()
@@ -766,15 +1171,27 @@ class DocumentTab(Gtk.Box):
                 self._replace_row.show()
             alloc = self._paned.get_allocation()
             if alloc.width > 100:
+                self._pending_split_ratio = False
                 self._paned.set_position(int(alloc.width * self.split_ratio))
-            self.render_preview(initial_scroll_ratio=self.scroll_ratio)
+            else:
+                self._pending_split_ratio = True
+            if should_render:
+                self.render_preview(initial_scroll_ratio=self.scroll_ratio)
 
         if self._search_revealer.get_reveal_child():
             self._run_search_query()
-        self._notify_state_changed()
+        if notify:
+            self._notify_state_changed()
+
+    def _on_paned_size_allocate(
+        self, paned: Gtk.Paned, allocation: Gdk.Rectangle
+    ) -> None:
+        if self._pending_split_ratio and self.view_mode == "split" and allocation.width > 100:
+            self._pending_split_ratio = False
+            paned.set_position(int(allocation.width * self.split_ratio))
 
     def _on_paned_position_changed(self, paned: Gtk.Paned, _pspec: object) -> None:
-        if self.view_mode == "split":
+        if self.view_mode == "split" and not self._pending_split_ratio:
             alloc = paned.get_allocation()
             if alloc.width > 100:
                 ratio = paned.get_position() / float(alloc.width)
@@ -810,7 +1227,8 @@ class DocumentTab(Gtk.Box):
         it = buf.get_iter_at_mark(mark)
         self.cursor_line = it.get_line() + 1
         self.cursor_col = it.get_line_offset() + 1
-        self._notify_state_changed()
+        if not self._cleaned_up and self._on_cursor_changed:
+            self._on_cursor_changed(self)
 
     def _on_editor_scrolled(self, adj: Gtk.Adjustment) -> None:
         if self._suppress_scroll_sync or self.view_mode != "split" or self.diff_active:
@@ -825,22 +1243,92 @@ class DocumentTab(Gtk.Box):
     # ------------------------------------------------------------------
     # Safe JS Evaluator & Bridge
     # ------------------------------------------------------------------
-    def _eval_js(self, script: str) -> None:
+    def _eval_js(
+        self,
+        script: str,
+        callback: Callable[[str | None], None] | None = None,
+    ) -> None:
         if self._cleaned_up:
+            if callback:
+                callback(None)
             return
+
+        def _finish_eval(wv: WebKit2.WebView, res: Gio.AsyncResult, _data: Any) -> None:
+            if callback is None:
+                return
+            if self._cleaned_up:
+                return
+            val_str: str | None = None
+            try:
+                if hasattr(wv, "evaluate_javascript_finish"):
+                    js_val = wv.evaluate_javascript_finish(res)
+                    if js_val is not None and not js_val.is_null() and not js_val.is_undefined():
+                        val_str = js_val.to_string()
+                elif hasattr(wv, "run_javascript_finish"):
+                    js_res = wv.run_javascript_finish(res)
+                    js_val = js_res.get_js_value() if js_res is not None else None
+                    if js_val is not None and not js_val.is_null() and not js_val.is_undefined():
+                        val_str = js_val.to_string()
+            except Exception:
+                val_str = None
+            callback(val_str)
+
         try:
+            cb = _finish_eval if callback is not None else None
             if hasattr(self.webview, "evaluate_javascript"):
-                self.webview.evaluate_javascript(script, -1, None, None, None, None, None)
+                self.webview.evaluate_javascript(script, -1, None, None, None, cb, None)
             elif hasattr(self.webview, "run_javascript"):
-                self.webview.run_javascript(script, None, None, None)
+                self.webview.run_javascript(script, None, cb, None)
+            elif callback is not None:
+                callback(None)
         except Exception:
-            pass
+            if callback is not None:
+                callback(None)
+
+    def scroll_to_top(self) -> None:
+        self.scroll_ratio = 0.0
+        self._eval_js("window.scrollTo({top: 0, behavior: 'auto'});")
+        self.jump_to_line(1)
 
     def scroll_to_slug(self, slug: str) -> None:
         if not slug:
             return
         escaped = json.dumps(slug)
-        self._eval_js(f"window.__mdv && window.__mdv.scrollToSlug({escaped});")
+        self._eval_js(
+            f"(window.__markveilScrollToHeading ? window.__markveilScrollToHeading({escaped}) "
+            f": (window.__mdv && window.__mdv.scrollToSlug({escaped})));"
+        )
+
+    def scroll_to_heading(self, heading_or_slug: str) -> None:
+        if not heading_or_slug:
+            return
+        # Match against extracted headings first to get exact slug
+        needle = heading_or_slug.strip().lower()
+        for h in self.headings:
+            if h.slug.lower() == needle or h.text.strip().lower() == needle:
+                self.scroll_to_slug(h.slug)
+                return
+        self.scroll_to_slug(heading_or_slug)
+
+    def scroll_to_line(self, start_line: int, end_line: int | None = None) -> None:
+        if start_line < 1:
+            return
+        self.jump_to_line(start_line)
+        end_arg = "null" if end_line is None else str(int(end_line))
+        self._eval_js(
+            f"(function(){{"
+            f"if (window.__markveilScrollToLine) {{ window.__markveilScrollToLine({int(start_line)}, {end_arg}); return; }}"
+            f"var el = document.querySelector('[data-source-line=\"{int(start_line)}\"]') || document.getElementById('L{int(start_line)}');"
+            f"if (el) el.scrollIntoView({{behavior:'smooth', block:'center'}});"
+            f"}})();"
+        )
+
+    def _deferred_scroll_to_line(
+        self, start_line: int, end_line: int | None
+    ) -> bool:
+        if not self._cleaned_up:
+            self.scroll_to_line(start_line, end_line)
+        return False
 
     def jump_to_line(self, line_1based: int) -> None:
         line_idx = max(0, int(line_1based) - 1)
@@ -849,6 +1337,24 @@ class DocumentTab(Gtk.Box):
         it = self.source_buffer.get_iter_at_line(line_idx)
         self.source_buffer.place_cursor(it)
         self.source_view.scroll_to_iter(it, 0.15, True, 0.0, 0.2)
+
+    def _current_heading_for_line(self, line_1based: int) -> str:
+        nearest = ""
+        for h in self.headings:
+            if h.line <= line_1based:
+                nearest = h.text
+            else:
+                break
+        if nearest:
+            return nearest
+        return self._current_heading_title()
+
+    def _current_heading_title(self) -> str:
+        if self.active_heading_slug:
+            for h in self.headings:
+                if h.slug == self.active_heading_slug:
+                    return h.text
+        return "Document"
 
     def _on_js_message(
         self, _ucm: WebKit2.UserContentManager, js_result: object
@@ -885,24 +1391,28 @@ class DocumentTab(Gtk.Box):
         elif msg_type == "copy-text":
             text = str(payload.get("text") or "")
             if text:
-                write_clipboard_text(text)
+                ok = write_clipboard_text(text)
                 if self._on_status_message:
-                    self._on_status_message("Copied to clipboard")
+                    self._on_status_message(
+                        "Copied to clipboard" if ok else "Failed to copy to clipboard"
+                    )
 
         elif msg_type == "copy-heading":
             slug = str(payload.get("slug") or "")
             if slug:
                 prefix = Path(self.current_file).name if self.current_file else ""
                 ref = f"{prefix}#{slug}" if prefix else f"#{slug}"
-                write_clipboard_text(ref)
+                ok = write_clipboard_text(ref)
                 if self._on_status_message:
-                    self._on_status_message(f"Copied {ref}")
+                    self._on_status_message(
+                        f"Copied {ref}" if ok else "Failed to copy link to clipboard"
+                    )
 
         elif msg_type == "checkbox-toggle":
             self._handle_checkbox_toggle(payload)
 
         elif msg_type == "add-comment":
-            heading = str(payload.get("heading") or "Document")
+            heading = str(payload.get("heading") or self._current_heading_title())
             quote = str(payload.get("quote") or "")
             self._prompt_add_comment(heading, quote)
 
@@ -947,7 +1457,67 @@ class DocumentTab(Gtk.Box):
         self.render_preview(initial_scroll_ratio=self.scroll_ratio)
         self._notify_state_changed()
 
-    def _prompt_add_comment(self, heading: str, quote: str) -> None:
+    # ------------------------------------------------------------------
+    # Review Comments Flow
+    # ------------------------------------------------------------------
+    def request_add_comment(self) -> None:
+        """Grab selection from Editor or WebKit Preview and open CommentEditorDialog."""
+        if self._cleaned_up:
+            return
+
+        # 1. Editor mode or Split mode with active editor selection/focus
+        bounds = self.source_buffer.get_selection_bounds()
+        if self.view_mode == "edit" or (
+            self.view_mode == "split" and (bool(bounds) or self.source_view.has_focus())
+        ):
+            if bounds:
+                start_it, end_it = bounds
+                quote = self.source_buffer.get_text(start_it, end_it, True).strip()
+                line = start_it.get_line() + 1
+            else:
+                quote = ""
+                line = self.cursor_line
+            heading = self._current_heading_for_line(line)
+            self._prompt_add_comment(heading, quote, line=line)
+            return
+
+        # 2. Preview / Split mode: query WebKit selection via JS bridge
+        js = (
+            "(function(){"
+            "if (typeof window.__markveilGetSelectionPayload === 'function') {"
+            "  var p = window.__markveilGetSelectionPayload();"
+            "  return JSON.stringify(p || {});"
+            "}"
+            "var sel = window.getSelection();"
+            "var quote = (sel && !sel.isCollapsed) ? sel.toString().trim() : '';"
+            "return JSON.stringify({heading: '', quote: quote});"
+            "})();"
+        )
+
+        def _on_payload(raw: str | None) -> None:
+            heading = self._current_heading_title()
+            quote = ""
+            if raw:
+                try:
+                    data = json.loads(raw)
+                    if isinstance(data, dict):
+                        if data.get("heading"):
+                            heading = str(data["heading"])
+                        if data.get("quote"):
+                            quote = str(data["quote"])
+                except Exception:
+                    pass
+            self._prompt_add_comment(heading, quote)
+
+        self._eval_js(js, callback=_on_payload)
+
+    def _prompt_add_comment(
+        self,
+        heading: str,
+        quote: str,
+        *,
+        line: int | None = None,
+    ) -> None:
         toplevel = self.get_toplevel()
         parent = toplevel if isinstance(toplevel, Gtk.Window) else None
         dialog = CommentEditorDialog(
@@ -958,8 +1528,16 @@ class DocumentTab(Gtk.Box):
         )
         if dialog.run() == Gtk.ResponseType.ACCEPT:
             feedback = dialog.get_feedback()
+            final_heading = dialog.get_heading()
+            final_quote = dialog.get_quote()
             if feedback:
-                self.review_session.add(heading=heading, quote=quote, feedback=feedback)
+                self.review_session.add(
+                    heading=final_heading,
+                    quote=final_quote,
+                    feedback=feedback,
+                    line=line,
+                )
+                self._local_comments_dirty = True
                 if self._on_comment_added:
                     self._on_comment_added(self)
                 self._notify_state_changed()
@@ -977,14 +1555,43 @@ class DocumentTab(Gtk.Box):
         )
         if dialog.run() == Gtk.ResponseType.ACCEPT:
             feedback = dialog.get_feedback()
+            final_heading = dialog.get_heading()
+            final_quote = dialog.get_quote()
             if feedback:
-                self.review_session.update(comment.id, feedback=feedback)
+                self.review_session.update(
+                    comment.id,
+                    feedback=feedback,
+                    heading=final_heading,
+                    quote=final_quote,
+                )
+                self._local_comments_dirty = True
                 self._notify_state_changed()
         dialog.destroy()
 
     def delete_review_comment(self, comment_id: str) -> None:
         if self.review_session.delete(comment_id):
+            self._local_comments_dirty = len(self.review_session) > 0
             self._notify_state_changed()
+
+    def scroll_to_comment(self, comment: ReviewComment) -> None:
+        """Scroll Preview and Editor to a review comment's anchored section/line."""
+        if comment.line and comment.line > 0:
+            self.scroll_to_line(comment.line)
+        heading = (comment.heading or "").strip()
+        if heading and heading.lower() != "document":
+            needle = heading.lower()
+            matched_line: int | None = None
+            for h in self.headings:
+                if h.text.strip().lower() == needle or h.slug.lower() == needle:
+                    self.scroll_to_slug(h.slug)
+                    matched_line = h.line
+                    break
+            else:
+                self.scroll_to_heading(heading)
+            if not comment.line and matched_line and matched_line > 0:
+                self.jump_to_line(matched_line)
+        elif not comment.line:
+            self.scroll_to_top()
 
     # ------------------------------------------------------------------
     # Navigation Policy & History
@@ -1026,7 +1633,12 @@ class DocumentTab(Gtk.Box):
             self._expected_base_uri.rstrip("/"),
         ):
             decision.ignore()
-            self.scroll_to_slug(unquote(parsed.fragment))
+            frag = unquote(parsed.fragment)
+            line_range = _parse_line_anchor(frag)
+            if line_range is not None:
+                self.scroll_to_line(line_range[0], line_range[1])
+            else:
+                self.scroll_to_slug(frag)
             return True
 
         # Local file:// links
@@ -1039,11 +1651,23 @@ class DocumentTab(Gtk.Box):
                 if rel_candidate.is_file():
                     target = rel_candidate
 
-            if target.is_file() and target.suffix.lower() in _SUPPORTED_LOCAL_SUFFIXES:
+            if not target.is_file():
+                msg = f"Link target not found: {target.name or local_path}"
+                if self._on_status_message:
+                    self._on_status_message(msg)
+                else:
+                    self.show_notice(msg, Gtk.MessageType.WARNING)
+                return True
+
+            if _is_supported_local_target(target):
                 target_str = str(target.resolve())
                 frag = unquote(parsed.fragment) if parsed.fragment else None
                 if self.current_file and target_str == self.current_file and frag:
-                    self.scroll_to_slug(frag)
+                    line_range = _parse_line_anchor(frag)
+                    if line_range is not None:
+                        self.scroll_to_line(line_range[0], line_range[1])
+                    else:
+                        self.scroll_to_slug(frag)
                     return True
 
                 open_new_tab = (
@@ -1055,6 +1679,11 @@ class DocumentTab(Gtk.Box):
                     self._on_open_file_request(target_str, True, frag)
                 else:
                     self.navigate_to_file(target_str, section=frag)
+            else:
+                if self._on_status_message:
+                    self._on_status_message(
+                        f"Unsupported local file type: {target.name}"
+                    )
             return True
 
         # External http / https / mailto links
@@ -1072,17 +1701,75 @@ class DocumentTab(Gtk.Box):
         decision.ignore()
         return True
 
+    def _confirm_standalone_leave(self) -> bool:
+        """Fallback confirmation prompt when navigate_to_file runs without an app host."""
+        toplevel = self.get_toplevel()
+        parent = toplevel if isinstance(toplevel, Gtk.Window) else None
+        if self.dirty:
+            dlg = Gtk.MessageDialog(
+                transient_for=parent,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.NONE,
+                text=f"Save changes to “{self.display_name}” before navigating away?",
+            )
+            dlg.get_style_context().add_class("markveil-window")
+            dlg.format_secondary_text(
+                "Your unsaved edits will be lost if you navigate without saving."
+            )
+            dlg.add_button("Discard", Gtk.ResponseType.NO)
+            dlg.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+            save_btn = dlg.add_button("Save", Gtk.ResponseType.YES)
+            save_btn.get_style_context().add_class("suggested-action")
+            dlg.set_default_response(Gtk.ResponseType.YES)
+            resp = dlg.run()
+            dlg.destroy()
+            if resp == Gtk.ResponseType.CANCEL:
+                return False
+            if resp == Gtk.ResponseType.YES:
+                if not self.save():
+                    return False
+        if self.has_unexported_comments():
+            dlg = Gtk.MessageDialog(
+                transient_for=parent,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.NONE,
+                text=f"Discard unexported review comments on “{self.display_name}”?",
+            )
+            dlg.get_style_context().add_class("markveil-window")
+            dlg.format_secondary_text(
+                "You have review comments that have not been exported yet."
+            )
+            dlg.add_button("Discard", Gtk.ResponseType.NO)
+            dlg.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+            dlg.set_default_response(Gtk.ResponseType.CANCEL)
+            resp = dlg.run()
+            dlg.destroy()
+            if resp != Gtk.ResponseType.NO:
+                return False
+        return True
+
     def navigate_to_file(
         self,
         target_path: str,
         *,
         section: str | None = None,
         push_history: bool = True,
-    ) -> None:
+        force: bool = False,
+    ) -> bool:
         resolved = str(Path(target_path).resolve())
         if not Path(resolved).is_file():
             self.show_notice(f"File not found: {target_path}", Gtk.MessageType.ERROR)
-            return
+            return False
+
+        if not force and (self.dirty or self.has_unexported_comments()):
+            if self._on_confirm_leave is not None:
+                if not self._on_confirm_leave(self):
+                    return False
+            elif not self._confirm_standalone_leave():
+                return False
+
         if push_history and self.current_file and self.current_file != resolved:
             self.history_back.append(self.current_file)
             self.history_forward.clear()
@@ -1094,6 +1781,11 @@ class DocumentTab(Gtk.Box):
         self.scroll_ratio = 0.0
         self._remote_img_banner_dismissed = False
 
+        # Isolate/reset review session per file and load sidecar if present
+        self.review_session = ReviewSession()
+        self._local_comments_dirty = False
+        self._load_sidecar_reviews()
+
         text = self._read_disk_file(resolved)
         self._last_disk_text = text
         self.revisions.clear()
@@ -1101,10 +1793,21 @@ class DocumentTab(Gtk.Box):
         self._record_revision(text)
         self._set_buffer_text(text, mark_clean=True)
         self._configure_source_language()
+        self._refresh_agentic_meta()
         if self.watch_enabled:
             self._restart_file_monitor()
-        self.render_preview(initial_scroll_ratio=0.0, initial_section=section)
+
+        line_range = _parse_line_anchor(section)
+        effective_section = None if line_range else section
+        self.render_preview(initial_scroll_ratio=0.0, initial_section=effective_section)
+        if line_range is not None:
+            self.jump_to_line(line_range[0])
+            GLib.timeout_add(120, self._deferred_scroll_to_line, line_range[0], line_range[1])
+
+        if self._on_file_navigated:
+            self._on_file_navigated(resolved)
         self._notify_state_changed()
+        return True
 
     def can_go_back(self) -> bool:
         return bool(self.history_back)
@@ -1115,19 +1818,25 @@ class DocumentTab(Gtk.Box):
     def go_back(self) -> bool:
         if not self.history_back:
             return False
-        prev = self.history_back.pop()
-        if self.current_file:
-            self.history_forward.append(self.current_file)
-        self.navigate_to_file(prev, push_history=False)
+        prev = self.history_back[-1]
+        current = self.current_file
+        if not self.navigate_to_file(prev, push_history=False):
+            return False
+        self.history_back.pop()
+        if current:
+            self.history_forward.append(current)
         return True
 
     def go_forward(self) -> bool:
         if not self.history_forward:
             return False
-        nxt = self.history_forward.pop()
-        if self.current_file:
-            self.history_back.append(self.current_file)
-        self.navigate_to_file(nxt, push_history=False)
+        nxt = self.history_forward[-1]
+        current = self.current_file
+        if not self.navigate_to_file(nxt, push_history=False):
+            return False
+        self.history_forward.pop()
+        if current:
+            self.history_back.append(current)
         return True
 
     # ------------------------------------------------------------------
@@ -1354,7 +2063,7 @@ class DocumentTab(Gtk.Box):
         self.diff_active = False
         self._diff_regen_fn = None
         self._diff_bar.hide()
-        self.set_view_mode(self.view_mode)
+        self.set_view_mode(self.view_mode, rerender=True)
 
     def _on_diff_layout_toggled(self, btn: Gtk.ToggleButton, mode: str) -> None:
         if not btn.get_active() or not self.diff_active:
@@ -1379,6 +2088,45 @@ class DocumentTab(Gtk.Box):
         self._notice_label.set_text(message)
         self._notice_infobar.show_all()
         self._notice_infobar.show()
+
+    def hide_notice(self) -> None:
+        self._notice_infobar.hide()
+
+    def show_empty_clipboard_prompt(self) -> None:
+        """Open empty Clipboard tab in Split/Edit mode with a clear inline prompt."""
+        if not self.readonly and self.view_mode == "preview":
+            self.set_view_mode("split", rerender=False)
+        self._clipboard_status_lbl.set_text("Clipboard Studio · Empty")
+        self.show_notice(
+            "Clipboard is empty — paste here or copy text and click Refresh.",
+            Gtk.MessageType.INFO,
+        )
+
+    def load_clipboard_payload(
+        self,
+        text: str,
+        was_html: bool = False,
+        *,
+        record_history: bool = True,
+        mark_dirty: bool = True,
+    ) -> None:
+        """Populate this Clipboard tab with text and update status/history cleanly."""
+        if not text:
+            self.show_empty_clipboard_prompt()
+            return
+        if record_history:
+            _record_clipboard_history(text, was_html=was_html)
+        self.hide_notice()
+        self._set_buffer_text(text, mark_clean=not mark_dirty)
+        self.dirty = bool(mark_dirty)
+        self._record_revision(text)
+        self._clipboard_status_lbl.set_text(
+            "Clipboard Studio · Converted from HTML"
+            if was_html
+            else "Clipboard Studio · Plain text"
+        )
+        self.render_preview(initial_scroll_ratio=0.0)
+        self._notify_state_changed()
 
     def _on_conflict_response(self, bar: Gtk.InfoBar, response_id: int) -> None:
         if response_id == 1:  # Reload from Disk
@@ -1422,23 +2170,20 @@ class DocumentTab(Gtk.Box):
     def paste_from_clipboard(self, prefer_html_convert: bool = True) -> None:
         payload = read_clipboard_smart(prefer_html_convert=prefer_html_convert)
         if not payload.text:
-            self.show_notice("Clipboard is empty.", Gtk.MessageType.INFO)
+            self.show_empty_clipboard_prompt()
             return
-        self._set_buffer_text(payload.text, mark_clean=False)
-        self.dirty = True
-        self._record_revision(payload.text)
-        self._clipboard_status_lbl.set_text(
-            "Clipboard Studio · Converted from HTML"
-            if payload.was_html
-            else "Clipboard Studio · Plain text"
+        self.load_clipboard_payload(
+            payload.text, payload.was_html, record_history=True, mark_dirty=True
         )
-        self.render_preview(initial_scroll_ratio=0.0)
-        self._notify_state_changed()
 
     def _on_copy_markdown_clicked(self, _btn: Gtk.Button) -> None:
-        write_clipboard_text(self.get_text())
+        ok = write_clipboard_text(self.get_text())
         if self._on_status_message:
-            self._on_status_message("Copied Markdown to clipboard")
+            self._on_status_message(
+                "Copied Markdown to clipboard"
+                if ok
+                else "Failed to copy Markdown to clipboard"
+            )
 
     def _on_clipboard_save_as(self, _btn: Gtk.Button) -> None:
         if self._on_save_as_request:
@@ -1555,8 +2300,8 @@ class DocumentTab(Gtk.Box):
         replacement = self._replace_entry.get_text()
         try:
             self._search_context.replace(bounds[0], bounds[1], replacement, -1)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[markveil] replace_current failed: {exc}", file=sys.stderr)
         self.search_next()
 
     def replace_all(self) -> None:
@@ -1565,8 +2310,8 @@ class DocumentTab(Gtk.Box):
         replacement = self._replace_entry.get_text()
         try:
             self._search_context.replace_all(replacement, -1)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[markveil] replace_all failed: {exc}", file=sys.stderr)
 
     def _on_webkit_counted_matches(
         self, _controller: WebKit2.FindController, count: int
