@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import re
+import time
 
 import markdown
 
 import mdviewer
+from mdviewer import client_js, diff_engine, themes
 from mdviewer.markdown_engine import (
     CustomHtmlFormatter,
     HeadingItem,
     RenderResult,
+    _render_json_tree_html,
+    _unique_slug_fast,
     detect_file_kind,
     extract_headings,
+    is_supported_local_file,
     render_document,
     render_markdown,
     toggle_task_checkbox_in_text,
@@ -319,3 +326,350 @@ def test_render_markdown_compat_and_body_html_override() -> None:
     assert '<div class="diff-report"><ins>added</ins></div>' in wrapped.html
     assert "bad()" not in wrapped.html
     assert f"script-src 'nonce-{wrapped.nonce}';" in wrapped.html
+
+
+def test_is_supported_local_file_and_source_line_anchors() -> None:
+    supported = [
+        "README.md",
+        "SKILL.md",
+        "rule.mdc",
+        "default.rules",
+        ".cursorrules",
+        "app.py",
+        "setup.sh",
+        "init.bash",
+        "env.zsh",
+        "index.js",
+        "main.ts",
+        "App.tsx",
+        "Card.jsx",
+        "lib.rs",
+        "server.go",
+        "main.c",
+        "types.h",
+        "engine.cpp",
+        "engine.hpp",
+        "styles.css",
+        "index.html",
+        "pom.xml",
+        "schema.sql",
+        "script.rb",
+        "Main.java",
+        "App.kt",
+        "View.swift",
+        "init.lua",
+        "app.ini",
+        "setup.cfg",
+        "nginx.conf",
+        "Makefile",
+        "Dockerfile",
+        "Dockerfile.dev",
+        "LICENSE",
+        Path("/tmp/config.toml"),
+    ]
+    for sample in supported:
+        assert is_supported_local_file(sample), f"Expected supported: {sample}"
+
+    unsupported = [
+        "",
+        "photo.png",
+        "archive.tar.gz",
+        "doc.pdf",
+        "module.pyc",
+        "data.sqlite",
+        "video.mp4",
+    ]
+    for sample in unsupported:
+        assert not is_supported_local_file(sample), f"Expected unsupported: {sample}"
+
+    assert detect_file_kind("rule.mdc") == "markdown"
+    assert detect_file_kind(".cursorrules") == "markdown"
+    assert detect_file_kind("default.rules") == "code"
+    assert detect_file_kind("Makefile") == "code"
+    assert detect_file_kind("Dockerfile") == "code"
+    assert detect_file_kind("LICENSE") == "text"
+    assert detect_file_kind("script.py") == "code"
+
+    # Source file rendering produces Pygments highlighting + line anchors without nested highlight div.
+    py_src = "def greet(name: str) -> str:\n    return f'hi {name}'\n"
+    res = render_document(py_src, file_path="demo.py", changed_lines={2})
+    assert res.file_kind == "code"
+    assert res.html.count('class="highlight mdv-source-view language-python"') == 1
+    assert '<span id="L1" data-line="1" class="mdv-code-line">' in res.html
+    assert '<span id="L2" data-line="2" class="mdv-code-line" data-changed="true">' in res.html
+
+    # Plain text also exposes line anchors for #L<n> navigation.
+    txt_res = render_document("MIT License\nLine 2\n", file_path="LICENSE")
+    assert txt_res.file_kind == "text"
+    assert 'id="L1" data-line="1"' in txt_res.html
+    assert 'id="L2" data-line="2"' in txt_res.html
+
+
+def test_json_tree_caps_depth_and_node_count() -> None:
+    # Deeply nested JSON (depth 60) must not raise RecursionError.
+    deep: dict = {"leaf": 1}
+    for _ in range(60):
+        deep = {"nested": deep}
+    deep_html = _render_json_tree_html(deep)
+    assert "max depth reached" in deep_html
+
+    # Large JSON array (5,000 items) caps DOM nodes cleanly with a summary.
+    large_payload = json.dumps({"items": list(range(5000))})
+    t0 = time.perf_counter()
+    res = render_document(large_payload, file_path="huge.json")
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    assert res.file_kind == "json"
+    assert "Valid JSON" in res.html
+    assert "more items" in res.html
+    assert res.html.count('class="json-leaf"') <= 2100
+    assert elapsed_ms < 1000.0
+
+
+def test_agentic_classification_strip_and_xss_escaping() -> None:
+    # Default render (agentic_meta=None) must not emit the strip.
+    plain = render_document("# Plain Doc")
+    assert 'class="mdv-agentic-strip"' not in plain.html
+
+    meta = {
+        "env_source": "claude",
+        "scope": "global",
+        "kind": "skill",
+        "name": 'review-helper <script>alert("x")</script>',
+        "description": 'Validates <img src=x onerror="evil()"> artifacts',
+        "triggers": ["/review", "<svg onload=alert(1)>"],
+        "globs": ["**/*.md", "*.mdc"],
+        "always_apply": True,
+        "rel_path": "~/.claude/skills/review-helper/SKILL.md",
+        "token_estimate": 1450,
+        "sibling_links": [
+            ("references/guide.md", "/tmp/references/guide.md"),
+            ("scripts/check.py", "scripts/check.py"),
+            ("evil-js", "javascript:alert(1)"),
+            ("evil-data", "data:text/html,<script>1</script>"),
+        ],
+    }
+    res = render_document("# Skill Doc\n\nBody.", file_path="/tmp/SKILL.md", agentic_meta=meta)
+    assert 'class="mdv-agentic-strip"' in res.html
+    assert "mdv-agentic-pill" in res.html
+    assert "mdv-agentic-meta" in res.html
+    assert "mdv-agentic-links" in res.html
+    assert "Claude" in res.html
+    assert "Skill" in res.html
+    assert "Global" in res.html
+    assert "Always Apply" in res.html
+    assert "~1,450 tok" in res.html
+    assert 'href="file:///tmp/references/guide.md"' in res.html
+    assert 'href="scripts/check.py"' in res.html
+
+    # XSS payloads must be escaped/stripped and unsafe sibling hrefs dropped.
+    body_section = res.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    assert "<script" not in body_section
+    assert "<img" not in body_section
+    assert "<svg" not in body_section
+    assert "javascript:" not in body_section
+    assert "evil-js" not in body_section
+    assert "evil-data" not in body_section
+    assert "&lt;script&gt;" in body_section
+    assert "&lt;img src=x onerror=" in body_section
+    assert "&lt;svg onload=" in body_section
+    assert '<span class="mdv-agentic-sep"> — </span>' in body_section
+
+
+def test_agentic_strip_deduplicates_env_scope_and_separates_name_desc() -> None:
+    meta = {
+        "env_source": "project",
+        "scope": "project",
+        "kind": "skill",
+        "name": "markveil",
+        "description": "Use when reviewing Markdown files.",
+    }
+    res = render_document("# Skill\n", file_path="/repo/skills/markveil/SKILL.md", agentic_meta=meta)
+    body = res.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    strip = body.split("</section>")[0]
+    assert strip.count(">Project<") == 1
+    assert 'class="mdv-agentic-pill mdv-agentic-pill-env">Project<' in strip
+    assert 'class="mdv-agentic-pill mdv-agentic-pill-kind">Skill<' in strip
+    assert "mdv-agentic-pill-scope" not in strip
+    assert (
+        '<span class="mdv-agentic-name">markveil</span>'
+        '<span class="mdv-agentic-sep"> — </span>'
+        '<span class="mdv-agentic-desc">Use when reviewing Markdown files.</span>'
+    ) in strip
+
+    # Only name (no description) should not emit a dangling separator.
+    only_name = render_document("# Skill\n", agentic_meta={"env_source": "claude", "name": "solo"})
+    only_name_body = only_name.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    assert "mdv-agentic-sep" not in only_name_body
+
+
+def test_source_and_text_blank_line_preservation_matches_md_viewer_py() -> None:
+    from html.parser import HTMLParser
+
+    class _CodeLineExtractor(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.lines: list[str] = []
+            self._depth = 0
+            self._buf: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            cls = dict(attrs).get("class") or ""
+            if self._depth > 0:
+                self._depth += 1
+            elif "mdv-code-line" in cls.split():
+                self._depth = 1
+                self._buf = []
+
+        def handle_endtag(self, tag: str) -> None:
+            if self._depth > 0:
+                self._depth -= 1
+                if self._depth == 0:
+                    self.lines.append("".join(self._buf))
+
+        def handle_data(self, data: str) -> None:
+            if self._depth > 0:
+                self._buf.append(data)
+
+    repo_root = Path(__file__).resolve().parent.parent
+    src_path = repo_root / "md_viewer.py"
+    src_text = src_path.read_text(encoding="utf-8")
+    res = render_document(src_text, file_path=str(src_path))
+    assert res.file_kind == "code"
+
+    body = res.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    extractor = _CodeLineExtractor()
+    extractor.feed(body)
+    extractor.close()
+
+    expected_lines = src_text.splitlines()
+    assert len(extractor.lines) == len(expected_lines)
+    # Every span carries a trailing newline (preserving blank lines natively without spaces).
+    assert all(line.endswith("\n") for line in extractor.lines)
+    # Blank lines contain "\n" rather than a bogus space " ".
+    blank_indices = [i for i, line in enumerate(expected_lines) if line == ""]
+    assert blank_indices, "Expected blank lines in md_viewer.py"
+    for idx in blank_indices:
+        assert extractor.lines[idx] == "\n"
+    extracted_joined = "\n".join(line.rstrip("\r\n") for line in extractor.lines)
+    assert extracted_joined == src_text.rstrip("\n")
+
+    # Plain-text document preserves consecutive blank lines without inserting spaces.
+    plain_src = "alpha\n\n\nbeta\n"
+    txt_res = render_document(plain_src, file_path="notes.txt")
+    txt_body = txt_res.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    txt_extractor = _CodeLineExtractor()
+    txt_extractor.feed(txt_body)
+    txt_extractor.close()
+    assert txt_extractor.lines == ["alpha\n", "\n", "\n", "beta\n"]
+    assert "".join(txt_extractor.lines) == plain_src
+    # No stray whitespace/newlines between adjacent line divs in pre-wrap container.
+    assert "</div><div id=\"L2\"" in txt_body
+
+
+def test_client_js_helpers_and_theme_css_invariants() -> None:
+    js = client_js.get_client_js(theme_id="folio")
+    assert "window.__markveilScrollToLine" in js
+    assert "window.__markveilScrollToHeading" in js
+    assert "window.__markveilGetSelectionPayload" in js
+    assert "window.__markveilExtractCodeText" in js
+    assert 'securityLevel: "strict"' in js
+    assert "mdv-line-highlight" in js
+    assert "(preamble)" in js
+
+    for theme_id in ("folio", "paper", "obsidian", "sepia", "nordic"):
+        css = themes.get_document_css(theme_id)
+        for cls in (
+            ".mdv-agentic-strip",
+            ".mdv-agentic-pill",
+            ".mdv-agentic-meta",
+            ".mdv-agentic-sep",
+            ".mdv-agentic-links",
+            ".mdv-code-line",
+            ".mdv-line-highlight",
+        ):
+            assert cls in css, f"Missing {cls} in theme {theme_id}"
+        copy_btn_block = css.split(".code-copy-btn {")[1].split("}")[0]
+        assert "user-select: none;" in copy_btn_block
+        assert "Bitstream Charter" in css
+        assert "IBM Plex Sans" in css
+        assert "JetBrains Mono" in css
+
+    # Verify sacred theme backgrounds are untouched.
+    assert themes.THEMES["folio"].bg == "#FAFAF2"
+    assert themes.THEMES["paper"].bg == "#FCFCFA"
+    assert themes.THEMES["obsidian"].bg == "#0E1116"
+    assert themes.THEMES["sepia"].bg == "#F8F3E6"
+    assert themes.THEMES["nordic"].bg == "#1A1F29"
+
+
+def test_duplicate_headings_fast_slugs_match_toc_parity() -> None:
+    # Direct _unique_slug_fast parity check when pre-suffixed slug collides.
+    seen: set[str] = set()
+    counters: dict[str, int] = {}
+    assert _unique_slug_fast("topic_2", seen, counters) == "topic_2"
+    assert _unique_slug_fast("topic", seen, counters) == "topic"
+    assert _unique_slug_fast("topic", seen, counters) == "topic_1"
+    assert _unique_slug_fast("topic", seen, counters) == "topic_3"
+
+    src = "\n".join("## Topic\n\nBody." for _ in range(500))
+    t0 = time.perf_counter()
+    headings = extract_headings(src)
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    assert len(headings) == 500
+    assert headings[0].slug == "topic"
+    assert headings[1].slug == "topic_1"
+    assert headings[2].slug == "topic_2"
+    assert headings[-1].slug == "topic_499"
+    assert elapsed_ms < 100.0
+
+    # Rendered HTML heading IDs match extracted slugs.
+    res = render_document(src)
+    assert 'id="topic"' in res.html
+    assert 'id="topic_1"' in res.html
+    assert 'id="topic_2"' in res.html
+    assert 'id="topic_499"' in res.html
+
+
+def test_performance_budgets_50kb_render_code_and_diff() -> None:
+    prose_50k = "\n".join(
+        f"## Section {i}: Architecture Overview\n\n"
+        f"This section describes module {i} with **important invariants**, `symbol_{i}`, "
+        f"and reference to [docs](https://example.com/doc/{i}).\n\n"
+        f"Additional narrative prose explaining design tradeoffs and offline rendering.\n\n"
+        f"- [ ] Check invariant {i}a\n"
+        f"- [x] Verify budget {i}b\n\n"
+        + (
+            f"```python\ndef handler_{i}(v: int) -> int:\n    return v * {i} + 1\n```\n\n"
+            if i % 4 == 0
+            else ""
+        )
+        for i in range(145)
+    )[:50_000]
+
+    code_50k = "\n".join(
+        f"### Example {i}\n\n"
+        f"```\nconst v_{i} = {i} + 1;\nfunction run_{i}() {{ return v_{i} * 2; }}\n```\n\n"
+        f"```python\ndef fn_{i}(a: int, b: int) -> int:\n    return a + b + {i}\n```\n\n"
+        for i in range(340)
+    )[:50_000]
+
+    new_50k = prose_50k.replace("Check invariant 10a", "Check invariant 10a UPDATED") + "\n## Tail\n"
+
+    # Warm up caches once (fonts/CSS/markdown instance).
+    render_document("# Warmup")
+
+    def best_ms(fn, runs: int = 3) -> float:
+        best = float("inf")
+        for _ in range(runs):
+            t0 = time.perf_counter()
+            fn()
+            best = min(best, (time.perf_counter() - t0) * 1000.0)
+        return best
+
+    prose_ms = best_ms(lambda: render_document(prose_50k))
+    code_ms = best_ms(lambda: render_document(code_50k))
+    diff_ms = best_ms(lambda: diff_engine.diff_texts(prose_50k, new_50k))
+
+    assert prose_ms < 90.0, f"50KB render too slow: {prose_ms:.1f}ms (budget < 90ms)"
+    assert code_ms < 220.0, f"50KB code-heavy render too slow: {code_ms:.1f}ms (budget < 220ms)"
+    assert diff_ms < 30.0, f"50KB diff too slow: {diff_ms:.1f}ms (budget < 30ms)"

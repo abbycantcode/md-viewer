@@ -186,3 +186,53 @@ def test_strips_comments_and_unknown_tags() -> None:
     assert "secret comment" not in cleaned
     assert "<marquee>" not in cleaned
     assert "Scroll<p>Safe</p>" == cleaned
+
+
+def test_img_src_normalizes_backslashes() -> None:
+    raw = (
+        r'<img src="\\evil.com/track.png" alt="unc">'
+        r'<img src="/\evil.com/slash.png" alt="mixed1">'
+        r'<img src="\/evil.com/slash2.png" alt="mixed2">'
+        r'<img src="https:\\evil.com\pic.png" alt="scheme-bs">'
+        r'<img src="\local\img.png" alt="local-abs">'
+        r'<img src="assets\diagram.png" alt="local-rel">'
+        r'<img src="data:image/png;base64,iVBOR\w0KGgo=" alt="bad-data">'
+    )
+    cleaned_blocked, blocked = sanitize_html(raw, allow_remote_images=False)
+    assert blocked == 4
+    assert 'data-blocked-src="//evil.com/track.png"' in cleaned_blocked
+    assert 'data-blocked-src="//evil.com/slash.png"' in cleaned_blocked
+    assert 'data-blocked-src="//evil.com/slash2.png"' in cleaned_blocked
+    assert 'data-blocked-src="https://evil.com/pic.png"' in cleaned_blocked
+    assert 'src="/local/img.png"' in cleaned_blocked
+    assert 'src="assets/diagram.png"' in cleaned_blocked
+    assert "iVBOR" not in cleaned_blocked
+
+    cleaned_allowed, allowed_blocked = sanitize_html(raw, allow_remote_images=True)
+    assert allowed_blocked == 0
+    assert 'src="//evil.com/track.png"' in cleaned_allowed
+    assert 'src="https://evil.com/pic.png"' in cleaned_allowed
+
+
+def test_allows_agentic_strip_and_source_line_attributes() -> None:
+    raw = (
+        '<section class="mdv-agentic-strip" aria-label="Agentic artifact classification">'
+        '<span class="mdv-agentic-pill" onclick="alert(1)">Claude</span>'
+        '<a class="mdv-agentic-link" href="file:///tmp/ref.md">ref.md</a>'
+        '<a class="mdv-agentic-link" href="javascript:alert(1)">bad</a>'
+        "</section>"
+        '<div class="highlight mdv-source-view" data-lang="python">'
+        '<pre><span id="L42" data-line="42" class="mdv-code-line" onmouseover="x()">x = 1</span></pre>'
+        "</div>"
+    )
+    cleaned, blocked = sanitize_html(raw)
+    assert blocked == 0
+    assert '<section class="mdv-agentic-strip" aria-label="Agentic artifact classification">' in cleaned
+    assert '<span class="mdv-agentic-pill">Claude</span>' in cleaned
+    assert '<a class="mdv-agentic-link" href="file:///tmp/ref.md">ref.md</a>' in cleaned
+    assert 'id="L42"' in cleaned
+    assert 'data-line="42"' in cleaned
+    assert 'class="mdv-code-line"' in cleaned
+    assert "onclick" not in cleaned.lower()
+    assert "onmouseover" not in cleaned.lower()
+    assert "javascript:" not in cleaned.lower()
