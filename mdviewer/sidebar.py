@@ -124,7 +124,10 @@ class DocumentSidebar(Gtk.Box):
         self._env_artifacts: list[Any] = []
         self._env_loaded: bool = False
         self._env_loading: bool = False
+        self._env_scan_seq: int = 0
         self._env_scope_filter: str = "all"
+        self._context_sibling_buttons: list[Gtk.Button] = []
+        self._agentic_context_card: Gtk.Box | None = None
         self._destroyed: bool = False
         self.connect("destroy", self._on_destroy)
 
@@ -504,6 +507,8 @@ class DocumentSidebar(Gtk.Box):
         if report is not None and report is self._shown_report:
             return
         self._shown_report = report
+        self._context_sibling_buttons = []
+        self._agentic_context_card = None
         for child in list(self._context_box.get_children()):
             self._context_box.remove(child)
 
@@ -577,19 +582,174 @@ class DocumentSidebar(Gtk.Box):
             code_bar.set_tooltip_text("Prose share of estimated tokens")
             token_card.pack_start(code_bar, False, False, 0)
 
-        if report.is_skill_doc:
-            fm_info = (
-                "Front-matter keys: " + ", ".join(report.front_matter_keys)
-                if report.front_matter_keys
-                else "No YAML front-matter keys found."
-            )
-            skill_lbl = Gtk.Label(label=f"Agent instruction doc · {fm_info}")
-            skill_lbl.get_style_context().add_class("muted-label")
-            skill_lbl.set_xalign(0.0)
-            skill_lbl.set_line_wrap(True)
-            token_card.pack_start(skill_lbl, False, False, 0)
-
         self._context_box.pack_start(token_card, False, False, 0)
+
+        # Agentic Artifact / Metadata card
+        art = getattr(report, "agentic_artifact", None)
+        if art is not None or report.is_skill_doc:
+            meta_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            meta_card.get_style_context().add_class("context-metric-card")
+            self._agentic_context_card = meta_card
+
+            if art is not None:
+                m_title = Gtk.Label(label="Agentic artifact")
+                m_title.get_style_context().add_class("sidebar-section-title")
+                m_title.set_xalign(0.0)
+                meta_card.pack_start(m_title, False, False, 0)
+
+                badges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+                env_source = str(getattr(art, "env_source", "") or "").strip()
+                art_kind = str(getattr(art, "kind", "") or "").strip()
+                art_scope = str(getattr(art, "scope", "") or "").strip()
+                always_apply = bool(getattr(art, "always_apply", False))
+
+                if env_source:
+                    eb = Gtk.Label(label=env_source)
+                    eb.get_style_context().add_class("env-badge-accent")
+                    badges.pack_start(eb, False, False, 0)
+                if art_kind:
+                    kb = Gtk.Label(label=art_kind)
+                    kb.get_style_context().add_class("env-badge")
+                    badges.pack_start(kb, False, False, 0)
+                if art_scope and art_scope.lower() != env_source.lower():
+                    sb = Gtk.Label(label=art_scope)
+                    sb.get_style_context().add_class("env-badge")
+                    badges.pack_start(sb, False, False, 0)
+                if always_apply:
+                    ab = Gtk.Label(label="Always Apply")
+                    ab.get_style_context().add_class("env-badge-accent")
+                    badges.pack_start(ab, False, False, 0)
+                if badges.get_children():
+                    meta_card.pack_start(badges, False, False, 0)
+
+                art_name = str(getattr(art, "name", "") or "").strip()
+                if art_name:
+                    nl = Gtk.Label(label=art_name)
+                    nl.set_xalign(0.0)
+                    nl.set_ellipsize(Pango.EllipsizeMode.END)
+                    meta_card.pack_start(nl, False, False, 0)
+
+                meta_grid = Gtk.Grid(column_spacing=8, row_spacing=4)
+                meta_row = 0
+                if art_scope:
+                    sk = Gtk.Label(label="Scope")
+                    sk.get_style_context().add_class("muted-label")
+                    sk.set_xalign(0.0)
+                    sv = Gtk.Label(label=art_scope)
+                    sv.set_xalign(0.0)
+                    sv.set_hexpand(True)
+                    meta_grid.attach(sk, 0, meta_row, 1, 1)
+                    meta_grid.attach(sv, 1, meta_row, 1, 1)
+                    meta_row += 1
+
+                triggers = [
+                    str(t).strip()
+                    for t in (getattr(art, "triggers", ()) or ())
+                    if str(t).strip()
+                ]
+                if triggers:
+                    tk = Gtk.Label(label="Triggers")
+                    tk.get_style_context().add_class("muted-label")
+                    tk.set_xalign(0.0)
+                    tk.set_valign(Gtk.Align.START)
+                    tv = Gtk.Label(label=", ".join(triggers))
+                    tv.set_xalign(0.0)
+                    tv.set_line_wrap(True)
+                    tv.set_max_width_chars(24)
+                    tv.set_hexpand(True)
+                    meta_grid.attach(tk, 0, meta_row, 1, 1)
+                    meta_grid.attach(tv, 1, meta_row, 1, 1)
+                    meta_row += 1
+
+                globs = [
+                    str(g).strip()
+                    for g in (getattr(art, "globs", ()) or ())
+                    if str(g).strip()
+                ]
+                if globs:
+                    gk = Gtk.Label(label="Globs")
+                    gk.get_style_context().add_class("muted-label")
+                    gk.set_xalign(0.0)
+                    gk.set_valign(Gtk.Align.START)
+                    gv = Gtk.Label(label=", ".join(globs))
+                    gv.set_xalign(0.0)
+                    gv.set_line_wrap(True)
+                    gv.set_max_width_chars(24)
+                    gv.set_hexpand(True)
+                    meta_grid.attach(gk, 0, meta_row, 1, 1)
+                    meta_grid.attach(gv, 1, meta_row, 1, 1)
+                    meta_row += 1
+
+                if report.front_matter_keys:
+                    fk = Gtk.Label(label="Front-matter")
+                    fk.get_style_context().add_class("muted-label")
+                    fk.set_xalign(0.0)
+                    fk.set_valign(Gtk.Align.START)
+                    fv = Gtk.Label(label=", ".join(report.front_matter_keys))
+                    fv.get_style_context().add_class("muted-label")
+                    fv.set_xalign(0.0)
+                    fv.set_line_wrap(True)
+                    fv.set_max_width_chars(24)
+                    fv.set_hexpand(True)
+                    meta_grid.attach(fk, 0, meta_row, 1, 1)
+                    meta_grid.attach(fv, 1, meta_row, 1, 1)
+                    meta_row += 1
+
+                if meta_row > 0:
+                    meta_card.pack_start(meta_grid, False, False, 0)
+
+                raw_links = list(getattr(art, "sibling_links", ()) or ())
+                normalized_links: list[tuple[str, str]] = []
+                for item in raw_links:
+                    if isinstance(item, (tuple, list)) and len(item) >= 2:
+                        lbl_text, target = str(item[0]).strip(), str(item[1]).strip()
+                    elif isinstance(item, dict):
+                        lbl_text = str(item.get("label") or "").strip()
+                        target = str(item.get("path") or "").strip()
+                    else:
+                        continue
+                    if lbl_text and target:
+                        normalized_links.append((lbl_text, target))
+
+                if normalized_links:
+                    links_hdr = Gtk.Label(label="Related files")
+                    links_hdr.get_style_context().add_class("muted-label")
+                    links_hdr.set_xalign(0.0)
+                    meta_card.pack_start(links_hdr, False, False, 0)
+
+                    for lbl_text, target in normalized_links:
+                        link_btn = Gtk.Button(label=lbl_text)
+                        link_btn.get_style_context().add_class("sidebar-action-btn")
+                        link_btn.set_focus_on_click(False)
+                        link_btn.set_tooltip_text(target)
+                        link_btn.sibling_path = target  # type: ignore[attr-defined]
+                        child_lbl = link_btn.get_child()
+                        if isinstance(child_lbl, Gtk.Label):
+                            child_lbl.set_xalign(0.0)
+                            child_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+                        link_btn.connect(
+                            "clicked", self._handle_open_sibling_link, target
+                        )
+                        self._context_sibling_buttons.append(link_btn)
+                        meta_card.pack_start(link_btn, False, False, 0)
+            else:
+                m_title = Gtk.Label(label="Agent metadata")
+                m_title.get_style_context().add_class("sidebar-section-title")
+                m_title.set_xalign(0.0)
+                meta_card.pack_start(m_title, False, False, 0)
+
+                fm_info = (
+                    "Front-matter keys: " + ", ".join(report.front_matter_keys)
+                    if report.front_matter_keys
+                    else "No YAML front-matter keys found."
+                )
+                skill_lbl = Gtk.Label(label=f"Agent instruction doc · {fm_info}")
+                skill_lbl.get_style_context().add_class("muted-label")
+                skill_lbl.set_xalign(0.0)
+                skill_lbl.set_line_wrap(True)
+                meta_card.pack_start(skill_lbl, False, False, 0)
+
+            self._context_box.pack_start(meta_card, False, False, 0)
 
         # Warnings card (SKILL.md / oversized section checks)
         if report.warnings:
@@ -659,6 +819,14 @@ class DocumentSidebar(Gtk.Box):
         sec = getattr(row, "section_stats", None)
         if sec is not None and self._on_section_clicked:
             self._on_section_clicked(sec)
+
+    def _handle_open_sibling_link(self, _btn: Gtk.Button, target_path: str) -> None:
+        if not target_path or not self._on_open_agentic_file:
+            return
+        candidate = Path(target_path)
+        if not candidate.is_absolute() and self._current_file:
+            candidate = Path(self._current_file).parent / candidate
+        self._on_open_agentic_file(str(candidate))
 
     # ------------------------------------------------------------------
     # Review Comments Updates
@@ -841,21 +1009,31 @@ class DocumentSidebar(Gtk.Box):
             new_root = Path(file_path).parent
 
         if new_root != self._project_root:
+            self._env_scan_seq += 1
             self._project_root = new_root
-            if self._env_loaded and self.get_active_tab() == "env":
+            if (self._env_loaded or self._env_loading) and self.get_active_tab() == "env":
                 self.refresh_agentic_catalog(force_refresh=False)
+            else:
+                self._env_loading = False
 
-    def set_agentic_artifacts(self, artifacts: list[Any]) -> None:
-        """Directly supply artifacts (used by async loader and tests)."""
+    def _apply_agentic_artifacts(self, artifacts: list[Any]) -> None:
         self._env_artifacts = list(artifacts)
         self._env_loaded = True
         self._env_loading = False
         self._render_env_list()
 
+    def set_agentic_artifacts(self, artifacts: list[Any]) -> None:
+        """Directly supply artifacts and invalidate any in-flight async scan."""
+        self._env_scan_seq += 1
+        self._apply_agentic_artifacts(artifacts)
+
     def refresh_agentic_catalog(self, *, force_refresh: bool = False) -> None:
         """Load global & project agentic environments asynchronously off the main thread."""
         if self._destroyed:
             return
+        self._env_scan_seq += 1
+        scan_seq = self._env_scan_seq
+
         if discover_agentic_catalog_async is None:
             self._env_loaded = True
             self._env_loading = False
@@ -869,8 +1047,9 @@ class DocumentSidebar(Gtk.Box):
 
         def _on_catalog(catalog: Any) -> None:
             def _apply() -> bool:
-                if not self._destroyed:
-                    self.set_agentic_artifacts(_extract_catalog_artifacts(catalog))
+                if self._destroyed or scan_seq != self._env_scan_seq:
+                    return False
+                self._apply_agentic_artifacts(_extract_catalog_artifacts(catalog))
                 return False
 
             GLib.idle_add(_apply)
@@ -883,9 +1062,12 @@ class DocumentSidebar(Gtk.Box):
                 force_refresh=force_refresh,
             )
         except Exception:
-            self._env_loading = False
-            self._env_loaded = True
-            self._env_placeholder.set_text("Unable to scan agentic environments.")
+            if scan_seq == self._env_scan_seq:
+                self._env_loading = False
+                self._env_loaded = True
+                self._env_placeholder.set_text("Unable to scan agentic environments.")
+
+    refresh_agentic_env = refresh_agentic_catalog
 
     def _on_env_scope_toggled(self, btn: Gtk.RadioButton, scope_key: str) -> None:
         if btn.get_active():

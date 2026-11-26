@@ -13,6 +13,11 @@ from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
+
 import gi
 
 gi.require_version("Gdk", "3.0")
@@ -77,6 +82,9 @@ _WATCH_DEBOUNCE_MS = 150
 _SPLIT_DEBOUNCE_MS = 180
 
 _LINE_ANCHOR_RE = re.compile(r"^L(\d+)(?:-L?(\d+))?$", re.IGNORECASE)
+_FRONT_MATTER_RE = re.compile(
+    r"\A---\s*\r?\n(.*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|\Z)", re.DOTALL
+)
 
 _FALLBACK_LOCAL_SUFFIXES = frozenset(
     {
@@ -156,8 +164,12 @@ _DESTRUCTIVE_CONTEXT_ACTIONS = frozenset(
 @dataclass(frozen=True)
 class _FallbackClipboardEntry:
     text: str
-    was_html: bool = False
+    source: str = "text"
     timestamp: float = 0.0
+
+    @property
+    def was_html(self) -> bool:
+        return self.source == "html"
 
 
 class _FallbackClipboardHistory:
@@ -165,12 +177,25 @@ class _FallbackClipboardHistory:
         self._max = max_entries
         self._entries: list[_FallbackClipboardEntry] = []
 
-    def record(self, text: str, was_html: bool = False) -> None:
+    def record(
+        self,
+        text: str,
+        source: str = "text",
+        *,
+        was_html: bool | None = None,
+    ) -> None:
         if not text:
             return
+        if was_html is not None:
+            resolved_source = "html" if was_html else "text"
+        else:
+            resolved_source = (source or "text").strip() or "text"
         self._entries = [e for e in self._entries if e.text != text]
         self._entries.insert(
-            0, _FallbackClipboardEntry(text=text, was_html=was_html, timestamp=time.time())
+            0,
+            _FallbackClipboardEntry(
+                text=text, source=resolved_source, timestamp=time.time()
+            ),
         )
         if len(self._entries) > self._max:
             self._entries = self._entries[: self._max]
@@ -188,6 +213,13 @@ class _FallbackClipboardHistory:
 _FALLBACK_CLIPBOARD_HISTORY = _FallbackClipboardHistory()
 
 
+def _entry_is_html(entry: Any) -> bool:
+    return (
+        str(getattr(entry, "source", "text") or "text").strip().lower() == "html"
+        or bool(getattr(entry, "was_html", False))
+    )
+
+
 def _get_clipboard_history() -> Any:
     if _clipboard_history_getter is not None:
         return _clipboard_history_getter()
@@ -198,23 +230,30 @@ def _record_clipboard_history(text: str, was_html: bool = False) -> None:
     if not text:
         return
     hist = _get_clipboard_history()
+    source = "html" if was_html else "text"
     try:
-        hist.record(text, was_html=was_html)
-    except TypeError:
-        try:
-            hist.record(text, was_html)
-        except Exception:
-            pass
-    except Exception:
-        pass
+        hist.record(text, source=source)
+    except Exception as exc:
+        print(
+            f"[markveil] Failed to record clipboard history: {exc}",
+            file=sys.stderr,
+        )
 
 
 def _list_clipboard_history() -> list[Any]:
     hist = _get_clipboard_history()
     try:
-        raw = hist.entries() if callable(getattr(hist, "entries", None)) else getattr(hist, "entries", [])
+        raw = (
+            hist.entries()
+            if callable(getattr(hist, "entries", None))
+            else getattr(hist, "entries", [])
+        )
         return list(raw)
-    except Exception:
+    except Exception as exc:
+        print(
+            f"[markveil] Failed to read clipboard history: {exc}",
+            file=sys.stderr,
+        )
         return []
 
 
@@ -222,8 +261,91 @@ def _clear_clipboard_history() -> None:
     hist = _get_clipboard_history()
     try:
         hist.clear()
-    except Exception:
-        pass
+    except Exception as exc:
+        print(
+            f"[markveil] Failed to clear clipboard history: {exc}",
+            file=sys.stderr,
+        )
+
+
+def _coerce_meta_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    if isinstance(value, (list, tuple)):
+        return [
+            str(item).strip()
+            for item in value
+            if item is not None and str(item).strip()
+        ]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _coerce_meta_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1", "on")
+    return False
+
+
+def _sync_agentic_meta_with_text(
+    base_meta: dict[str, Any],
+    text: str,
+    est_tokens: int,
+) -> dict[str, Any]:
+    """Sync live token estimate and YAML front-matter fields from in-memory buffer text."""
+    meta = dict(base_meta)
+    meta["token_estimate"] = max(0, int(est_tokens))
+    if str(meta.get("kind") or "").lower() == "config":
+        return meta
+
+    match = _FRONT_MATTER_RE.match(text or "")
+    if match is None:
+        meta["triggers"] = []
+        meta["globs"] = []
+        meta["always_apply"] = False
+        return meta
+
+    fm_data: dict[str, Any] | None = None
+    if yaml is not None:
+        try:
+            parsed = yaml.safe_load(match.group(1))
+            if isinstance(parsed, dict):
+                fm_data = parsed
+        except Exception:
+            fm_data = None
+
+    if fm_data is None:
+        return meta
+
+    if "name" in fm_data or "title" in fm_data:
+        raw_name = fm_data.get("name") or fm_data.get("title")
+        if isinstance(raw_name, str) and raw_name.strip():
+            meta["name"] = raw_name.strip()
+
+    if "description" in fm_data or "summary" in fm_data:
+        raw_desc = fm_data.get("description") or fm_data.get("summary")
+        if isinstance(raw_desc, str):
+            meta["description"] = " ".join(raw_desc.split())[:240]
+        else:
+            meta["description"] = ""
+
+    meta["triggers"] = _coerce_meta_list(
+        fm_data.get("triggers") if "triggers" in fm_data else fm_data.get("trigger")
+    )
+    meta["globs"] = _coerce_meta_list(
+        fm_data.get("globs") if "globs" in fm_data else fm_data.get("paths")
+    )
+    if "alwaysApply" in fm_data:
+        meta["always_apply"] = _coerce_meta_bool(fm_data.get("alwaysApply"))
+    elif "always_apply" in fm_data:
+        meta["always_apply"] = _coerce_meta_bool(fm_data.get("always_apply"))
+    else:
+        meta["always_apply"] = False
+    return meta
 
 
 def _is_supported_local_target(path: Path) -> bool:
@@ -231,8 +353,11 @@ def _is_supported_local_target(path: Path) -> bool:
         try:
             if _engine_is_supported_local_file(path):
                 return True
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            print(
+                f"[markveil] Local target check failed for {path}: {exc}",
+                file=sys.stderr,
+            )
     if path.suffix.lower() in _FALLBACK_LOCAL_SUFFIXES:
         return True
     if path.name.lower() in _FALLBACK_EXTENSIONLESS_NAMES:
@@ -259,7 +384,7 @@ def _file_uri_to_path(uri: str) -> str:
     try:
         path, _host = GLib.filename_from_uri(uri)
         return path
-    except Exception:
+    except (GLib.Error, ValueError):
         parsed = urlparse(uri)
         return url2pathname(unquote(parsed.path))
 
@@ -330,6 +455,7 @@ class DocumentTab(Gtk.Box):
         self.cursor_line: int = 1
         self.cursor_col: int = 1
         self.render_count: int = 0
+        self._base_agentic_meta: dict[str, Any] | None = None
         self._agentic_meta: dict[str, Any] | None = None
 
         # Link navigation history
@@ -559,14 +685,14 @@ class DocumentTab(Gtk.Box):
         else:
             for entry in entries[:10]:
                 text = str(getattr(entry, "text", entry) or "")
-                was_html = bool(getattr(entry, "was_html", False))
+                was_html = _entry_is_html(entry)
                 first_line = next(
                     (ln.strip() for ln in text.splitlines() if ln.strip()),
                     "(empty)",
                 )
                 if len(first_line) > 46:
                     first_line = first_line[:43] + "…"
-                tag = "HTML" if was_html else "Text"
+                tag = "HTML → MD" if was_html else "Text"
                 btn = Gtk.ModelButton()
                 btn.set_label(f"[{tag}] {first_line}")
                 btn.connect(
@@ -841,6 +967,7 @@ class DocumentTab(Gtk.Box):
     # Document Text, Loading, Agentic Metadata, Sidecar Reviews, and Saving
     # ------------------------------------------------------------------
     def _refresh_agentic_meta(self) -> None:
+        self._base_agentic_meta = None
         self._agentic_meta = None
         if not self.current_file or classify_agentic_file is None:
             return
@@ -848,8 +975,15 @@ class DocumentTab(Gtk.Box):
             proj = find_project_root(self.current_file) if find_project_root is not None else None
             artifact = classify_agentic_file(self.current_file, project_root=proj)
             if artifact is not None and hasattr(artifact, "to_banner_dict"):
-                self._agentic_meta = artifact.to_banner_dict()
-        except Exception:
+                banner = artifact.to_banner_dict()
+                self._base_agentic_meta = dict(banner)
+                self._agentic_meta = dict(banner)
+        except Exception as exc:
+            print(
+                f"[markveil] Failed to classify agentic file {self.current_file}: {exc}",
+                file=sys.stderr,
+            )
+            self._base_agentic_meta = None
             self._agentic_meta = None
 
     def _load_sidecar_reviews(self) -> None:
@@ -862,7 +996,11 @@ class DocumentTab(Gtk.Box):
             try:
                 found = find_sidecar_review_path(self.current_file)
                 sidecar = Path(found) if found else None
-            except Exception:
+            except OSError as exc:
+                print(
+                    f"[markveil] Failed to locate sidecar review for {self.current_file}: {exc}",
+                    file=sys.stderr,
+                )
                 sidecar = None
         else:
             candidate = Path(default_review_path(self.current_file))
@@ -882,8 +1020,11 @@ class DocumentTab(Gtk.Box):
                 self._on_status_message(
                     f"Loaded {count} review {noun} from {sidecar.name}"
                 )
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            print(
+                f"[markveil] Failed to load sidecar reviews from {sidecar}: {exc}",
+                file=sys.stderr,
+            )
 
     def has_unexported_comments(self) -> bool:
         if hasattr(self.review_session, "has_unexported_changes"):
@@ -1027,6 +1168,24 @@ class DocumentTab(Gtk.Box):
             return
         text = self.get_text()
         ratio = self.scroll_ratio if initial_scroll_ratio is None else initial_scroll_ratio
+        report = analyze_document(text, file_path=self.current_file)
+        self.context_report = report
+
+        base_meta = self._base_agentic_meta
+        if base_meta is None and report.agentic_artifact is not None and hasattr(
+            report.agentic_artifact, "to_banner_dict"
+        ):
+            base_meta = report.agentic_artifact.to_banner_dict(
+                token_estimate=report.est_tokens
+            )
+            self._base_agentic_meta = dict(base_meta)
+
+        if base_meta is not None:
+            self._agentic_meta = _sync_agentic_meta_with_text(
+                base_meta, text, report.est_tokens
+            )
+        else:
+            self._agentic_meta = None
 
         render_kwargs: dict[str, Any] = {
             "file_path": self.current_file,
@@ -1046,7 +1205,6 @@ class DocumentTab(Gtk.Box):
         self.render_count += 1
         self.last_render_result = result
         self.headings = list(result.headings)
-        self.context_report = analyze_document(text, file_path=self.current_file)
 
         if result.blocked_remote_images > 0 and not self._remote_img_banner_dismissed:
             n = result.blocked_remote_images
@@ -1269,7 +1427,10 @@ class DocumentTab(Gtk.Box):
                     js_val = js_res.get_js_value() if js_res is not None else None
                     if js_val is not None and not js_val.is_null() and not js_val.is_undefined():
                         val_str = js_val.to_string()
-            except Exception:
+            except GLib.Error:
+                val_str = None
+            except Exception as exc:
+                print(f"[markveil] JS evaluation callback error: {exc}", file=sys.stderr)
                 val_str = None
             callback(val_str)
 
@@ -1281,7 +1442,8 @@ class DocumentTab(Gtk.Box):
                 self.webview.run_javascript(script, None, cb, None)
             elif callback is not None:
                 callback(None)
-        except Exception:
+        except Exception as exc:
+            print(f"[markveil] JS evaluation dispatch error: {exc}", file=sys.stderr)
             if callback is not None:
                 callback(None)
 
@@ -1371,7 +1533,8 @@ class DocumentTab(Gtk.Box):
             else:
                 return
             payload = json.loads(raw)
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            print(f"[markveil] Ignored malformed JS bridge message: {exc}", file=sys.stderr)
             return
 
         if not isinstance(payload, dict):
@@ -1486,6 +1649,7 @@ class DocumentTab(Gtk.Box):
             "(function(){"
             "if (typeof window.__markveilGetSelectionPayload === 'function') {"
             "  var p = window.__markveilGetSelectionPayload();"
+            "  if (typeof p === 'string') return p;"
             "  return JSON.stringify(p || {});"
             "}"
             "var sel = window.getSelection();"
@@ -1500,13 +1664,18 @@ class DocumentTab(Gtk.Box):
             if raw:
                 try:
                     data = json.loads(raw)
+                    if isinstance(data, str):
+                        data = json.loads(data)
                     if isinstance(data, dict):
                         if data.get("heading"):
                             heading = str(data["heading"])
                         if data.get("quote"):
                             quote = str(data["quote"])
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                    print(
+                        f"[markveil] Failed to parse selection payload: {exc}",
+                        file=sys.stderr,
+                    )
             self._prompt_add_comment(heading, quote)
 
         self._eval_js(js, callback=_on_payload)
@@ -1693,8 +1862,8 @@ class DocumentTab(Gtk.Box):
             win = toplevel if isinstance(toplevel, Gtk.Window) else None
             try:
                 Gtk.show_uri_on_window(win, uri, Gdk.CURRENT_TIME)
-            except Exception:
-                pass
+            except GLib.Error as exc:
+                print(f"[markveil] Could not open URI {uri}: {exc}", file=sys.stderr)
             return True
 
         # Block javascript:, vbscript:, data:, and everything else
@@ -1889,8 +2058,8 @@ class DocumentTab(Gtk.Box):
         if self._file_monitor is not None:
             try:
                 self._file_monitor.cancel()
-            except Exception:
-                pass
+            except GLib.Error as exc:
+                print(f"[markveil] File monitor cancel error: {exc}", file=sys.stderr)
             self._file_monitor = None
 
     def _on_file_monitor_event(
@@ -1948,6 +2117,7 @@ class DocumentTab(Gtk.Box):
         self._last_disk_text = disk_text
         self._set_buffer_text(disk_text, mark_clean=True)
         self._record_revision(disk_text)
+        self._refresh_agentic_meta()
         self.pending_updates = 0
         self._update_watch_bar()
 

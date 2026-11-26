@@ -16,6 +16,7 @@ gi.require_version("GtkSource", "300")
 
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+from mdviewer import clipboard as _clipboard_mod  # noqa: E402
 from mdviewer.cli import LaunchOptions  # noqa: E402
 from mdviewer.clipboard import read_clipboard_smart, write_clipboard_text  # noqa: E402
 from mdviewer.config import (  # noqa: E402
@@ -139,6 +140,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._status_toast_timer: int = 0
         self._config_save_timer: int = 0
         self._config_dirty: bool = False
+        self._clipboard_flushed: bool = False
         self._pending_clipboard_tab: DocumentTab | None = None
         self._pending_clipboard_attempts: int = 0
         self._pending_clipboard_timer: int = 0
@@ -1697,8 +1699,28 @@ class MarkdownViewerApp(Gtk.Application):
             self._config_save_timer = 0
         for tab in list(self.get_all_tabs()):
             tab.cleanup()
+        if not self._clipboard_flushed:
+            self._clipboard_flushed = True
+            self._flush_clipboard_on_exit()
         self._save_config_safe()
         self._config_dirty = False
+
+    @staticmethod
+    def _flush_clipboard_on_exit() -> None:
+        flush_fn = getattr(_clipboard_mod, "flush_clipboard", None)
+        if callable(flush_fn):
+            try:
+                flush_fn()
+                return
+            except Exception as exc:
+                print(f"[markveil] Failed to flush clipboard: {exc}", file=sys.stderr)
+                return
+        try:
+            display = Gdk.Display.get_default()
+            if display is not None:
+                Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).store()
+        except Exception as exc:
+            print(f"[markveil] Failed to store GTK clipboard: {exc}", file=sys.stderr)
 
     def _schedule_config_save(self, delay_ms: int = _CONFIG_SAVE_DEBOUNCE_MS) -> None:
         """Debounce disk writes so interactive toggles/resizes never stall on fsync."""
