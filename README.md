@@ -174,7 +174,7 @@ bash setup.sh
 `setup.sh` uses [`uv`](https://docs.astral.sh/uv/) when installed and otherwise falls back to system `python3 -m venv --system-site-packages` (reusing distro `markdown` and `pyyaml` packages when already installed). It performs six steps:
 1. Marks `markveil`, `mdv`, `md-viewer`, `md-viewer-clipboard`, and `md_viewer.py` executable.
 2. Creates `.venv` with `--system-site-packages` and ensures `markdown` and `pyyaml` are available.
-3. Verifies GTK3, WebKit2 4.1, GtkSource 300, Pygments, `mdviewer` imports, icons, and bundled KaTeX and Mermaid assets.
+3. Verifies GTK3, WebKit2 4.1, GtkSourceView 3/300, Pygments, `mdviewer` imports, icons, and bundled KaTeX and Mermaid assets.
 4. Symlinks `markveil`, `mdv`, `md-viewer` (compatibility alias), and `md-viewer-clipboard` into `~/.local/bin/`.
 5. Installs SVG and PNG icons into `~/.local/share/icons/hicolor/`, installs `.desktop` entries into `~/.local/share/applications/`, and sets `markveil.desktop` as the default handler for `text/markdown` and `text/x-markdown` without changing `.json` or `.txt` defaults.
 6. Registers `Super+Shift+M` as a GNOME custom keybinding when `gsettings` is writable, and skips it on KDE, Sway, Hyprland, XFCE, or headless environments.
@@ -296,7 +296,7 @@ Coding agents (Claude Code, Codex, OpenCode, Antigravity, Cursor) can load [`ski
 - Python 3.12+ (system)
 - PyGObject / GTK 3 (`python3-gi`, `gir1.2-gtk-3.0`)
 - WebKit2GTK 4.1 (`gir1.2-webkit2-4.1`)
-- GtkSourceView 300 (`gir1.2-gtksource-3.0`)
+- GtkSourceView 3 / 300 (`gir1.2-gtksource-3.0` or `gir1.2-gtksource-300`)
 - Pygments (`python3-pygments`)
 - `markdown` and `pyyaml` (installed into `.venv` via `uv`)
 - Bundled offline assets in `assets/vendor/`: KaTeX and Mermaid

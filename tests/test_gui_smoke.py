@@ -16,7 +16,14 @@ try:
     gi.require_version("Gdk", "3.0")
     gi.require_version("Gtk", "3.0")
     gi.require_version("WebKit2", "4.1")
-    gi.require_version("GtkSource", "300")
+    for _gtksource_ver in ("300", "3.0", "4"):
+        try:
+            gi.require_version("GtkSource", _gtksource_ver)
+            break
+        except ValueError:
+            continue
+    else:
+        gi.require_version("GtkSource", "3.0")
     from gi.repository import Gdk, GLib, Gtk
 
     _GTK_AVAILABLE = bool(Gtk.init_check([])[0])

@@ -46,7 +46,14 @@ try:
     import gi
     gi.require_version('Gtk', '3.0')
     gi.require_version('WebKit2', '4.1')
-    gi.require_version('GtkSource', '300')
+    for _ver in ('300', '3.0', '4'):
+        try:
+            gi.require_version('GtkSource', _ver)
+            break
+        except ValueError:
+            continue
+    else:
+        gi.require_version('GtkSource', '3.0')
     from gi.repository import Gtk, WebKit2, GtkSource
     import markdown
     import yaml
