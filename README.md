@@ -2,86 +2,124 @@
   <img src="assets/icons/markveil.svg" width="96" height="96" alt="Markveil logo" />
   <h1>Markveil</h1>
   <p><strong>Native GTK3 + WebKit2 Markdown studio for Linux and local coding-agent workflows.</strong></p>
-  <p>Offline KaTeX and Mermaid · Watch mode · Context token inspector · Visual diffs · Portable <code>*.review.md</code> feedback</p>
+  <p>Offline KaTeX &amp; Mermaid · Agentic Env browser · Watch mode · Visual diffs · 9 local agent CLIs · Portable <code>*.review.md</code> feedback</p>
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/folio-studio.png" alt="Markveil’s Folio workspace with an open-document list, heading outline, and rendered revision-flow diagram" width="100%" />
+  <img src="docs/screenshots/folio-studio.png" alt="Markveil’s Folio workspace with an open-document list, 4-tab sidebar switcher, heading outline, and rendered revision-flow diagram" width="100%" />
 </p>
 
 ## Why Markveil
 
-Most Linux Markdown tools fall into two groups: Electron workspaces that consume hundreds of megabytes of RAM, or bare readers that lack Mermaid diagrams, math, diffs, and live reload. **Markveil** (`markveil`, short alias `mdv`, compatibility alias `md-viewer`) is a native desktop app built for reading, editing, and reviewing technical Markdown and agent-generated plans.
+Most Linux Markdown tools fall into two groups: Electron workspaces that consume hundreds of megabytes of RAM, or bare readers that lack Mermaid diagrams, math, diffs, and live reload. **Markveil** (`markveil`, short alias `mdv`, compatibility alias `md-viewer`) is a native desktop app built for reading, editing, and reviewing technical Markdown, source files, and coding-agent artifacts with single-render startup and cached local rendering.
 
 | Capability | Markveil (`mdv`) | Electron apps (Obsidian, VS Code) | Minimal viewers |
 |---|---|---|---|
-| Cold CLI startup | ~170 ms | 1.5 - 4 s | <50 ms |
+| Cold CLI startup | ~170 ms (single-render) | 1.5 – 4 s | <50 ms |
 | Native GTK3 + WebKit2 | Yes (no Electron or Node) | No (Chromium) | Terminal or basic widget |
 | Offline KaTeX + Mermaid | Bundled locally | Plugin or network dependent | Usually unsupported |
+| Agentic Env discovery & classification | Built-in (global + project) | None | None |
 | Watch mode + changed-block highlight | Built-in (`-w`) | External extension | None |
-| Context and `SKILL.md` token inspector | Built-in | None | None |
-| Portable `*.review.md` export | Built-in | None | None |
-| Visual `--git-diff` and `--diff` | Built-in | Git extension | Text only |
-| Local CLI agent (`claude`, `codex`, `agy`) | Built-in (`Ctrl+Shift+A`) | Paid add-on or extension | None |
+| Context, token & artifact inspector | Built-in | None | None |
+| Portable `*.review.md` round-trip | Built-in (`Ctrl+Shift+M`) | None | None |
+| Visual `--git-diff` and `--diff` | Built-in (`Ctrl+D`) | Git extension | Text only |
+| Local CLI agents (9 CLIs, desktop `PATH`) | Built-in (`Ctrl+Shift+A`) | Paid add-on or extension | None |
+| Clipboard studio + bounded history | Built-in (`Ctrl+Shift+V` / `Super+Shift+M`) | External tool | None |
+| Local source & `#L42` / `#L10-L20` anchors | Built-in | Built-in (VS Code) | None |
 
 Tradeoffs: Markveil targets Linux desktops with GTK3 and WebKit2GTK 4.1. It has no cloud sync, vault graph, or plugin marketplace.
 
 ## The Folio workspace
 
-Folio opens new installations with a forest-green toolbar, sage sidebar, and ivory reading surface. Select a file under **Open documents**, then use **Outline**, **Context**, or **Comments** below it. Collapse the sidebar with `Ctrl+B` to give the document more room. When multiple files are open, their tabs move above the document.
+Folio opens new installations with a forest-green toolbar, sage sidebar, and ivory reading surface. Select a file under **Open documents**, then switch between four sidebar tabs below it: **Outline**, **Context**, **Comments**, and **Agentic Env**. Collapse the sidebar with `Ctrl+B` to give the document more room. When multiple files are open, their tabs move above the document.
 
-Choose **Preview**, **Split**, or **Edit** in the toolbar. The menu contains **Ask local agent**, theme switching, and preferences. Existing theme and sidebar preferences carry over. To open a document in Folio, run `mdv --theme folio README.md`.
+Choose **Preview**, **Split**, or **Edit** in the toolbar. The menu contains **Ask local agent**, **Open Clipboard**, theme switching, and preferences. Existing theme and sidebar preferences carry over. To open a document in Folio, run `mdv --theme folio README.md`.
 
 ## Screenshots
 
 <table>
   <tr>
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/split-paper-editor.png" alt="Split live preview and editor in Paper theme with Outline sidebar" width="100%" />
-      <p align="center"><strong>Split view (Paper).</strong> <code>GtkSourceView</code> with debounced live preview, proportional scroll sync, open-document navigation, and a collapsible heading outline.</p>
-    </td>
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/visual-diff-review.png" alt="Side-by-side visual diff review in Obsidian theme" width="100%" />
-      <p align="center"><strong>Visual diff review.</strong> Compare against previous watched revisions, <code>git HEAD</code>, or another file with heading context and word-level highlights.</p>
+    <td colspan="2" valign="top">
+      <img src="docs/screenshots/agentic-env-folio.png" alt="Folio workspace displaying skills/markveil/SKILL.md with the editorial classification strip and the Agentic Env sidebar tab" width="100%" />
+      <p align="center"><strong>Agentic environment browser &amp; classification strip (Folio).</strong> Auto-discover global and project skills, agents, rules, and configs in the 4th sidebar tab, with an inline classification header at the top of each artifact.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/hero-obsidian-studio.png" alt="Watch mode with the Context inspector in Obsidian" width="100%" />
-      <p align="center"><strong>Watch mode (Obsidian).</strong> Follow revisions on disk and inspect the document’s token estimate.</p>
+      <img src="docs/screenshots/sepia-review-comments.png" alt="Sepia reading theme with anchored Review Comments sidebar and + Add, Copy, and Export controls" width="100%" />
+      <p align="center"><strong>Portable review comments (Sepia).</strong> Add feedback with <code>+ Add</code> or <code>Ctrl+Shift+M</code>, capture selections from Preview or Edit, and round-trip <code>*.review.md</code> sidecars.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/sepia-review-comments.png" alt="Sepia reading theme with anchored Review Comments sidebar" width="100%" />
-      <p align="center"><strong>Portable review comments (Sepia).</strong> Select text in Preview, attach feedback, and export a <code>*.review.md</code> file for any coding agent.</p>
+      <img src="docs/screenshots/split-paper-editor.png" alt="Split live preview and editor in Paper theme with Outline sidebar" width="100%" />
+      <p align="center"><strong>Split view (Paper).</strong> <code>GtkSourceView</code> with debounced live preview, proportional scroll sync, open-document navigation, and a collapsible heading outline.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/visual-diff-review.png" alt="Side-by-side visual diff review in Obsidian theme" width="100%" />
+      <p align="center"><strong>Visual diff review (Obsidian).</strong> Compare against previous watched revisions, <code>git HEAD</code>, or another file with heading context and word-level highlights.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/hero-obsidian-studio.png" alt="Watch mode with the Context inspector in Obsidian" width="100%" />
+      <p align="center"><strong>Watch mode &amp; Context inspector (Obsidian).</strong> Follow revisions on disk and inspect per-section token estimates.</p>
     </td>
   </tr>
 </table>
 
 ## Workflows
 
+### Agentic environment discovery & classification
+Markveil discovers and classifies coding-agent files offline across both global user directories (`~/.claude`, `~/.codex`, `~/.agents`, `~/.gemini`, `~/.cursor`, `~/.config/opencode`, `~/.grok`, plus standalone `~/.config/CLAUDE.md`, `~/.config/GEMINI.md`, and `~/.antigravity/GEMINI.md`) and project-local roots (repository-level `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `MEMORY.md`, and local `.claude/`, `.codex/`, `.agents/`, `.gemini/`, `.cursor/`, `.opencode/`, `skills/`, `agents/`, `rules/`, `references/`, and `prompts/` folders).
+
+- **Taxonomy.** Artifacts are tagged by environment (`claude`, `codex`, `gemini`, `agents`, `cursor`, `opencode`, `grok`, `project`), scope (`global` or `project`), and kind (`skill`, `agent`, `rule`, `command`, `reference`, `prompt`, `memory`, `config`).
+- **4th sidebar tab & Welcome browser.** Open the **Agentic Env** tab in the sidebar—or browse **Agentic Environments** on the Welcome screen—to filter by free-text query, scope (`All`, `Project`, `Global`), environment, or kind. Scans run asynchronously off the GTK main thread.
+- **Inline classification strip & Context card.** Opening a classified artifact renders an editorial `.mdv-agentic-strip` header above the document body showing badges, relative path, estimated tokens, triggers/globs, and clickable sibling `references/` and `scripts/` links. The **Context** tab displays the same metadata in an **Agentic artifact** card with clickable related-file links.
+
 ### Watch mode
 Open a file with `mdv -w PLAN.md` or press `Ctrl+Shift+W`. When an external tool or coding agent writes to the file on disk, Markveil reloads it through `Gio.FileMonitor` with no modal confirmation dialogs and highlights changed blocks in place (`[data-changed="true"]`). You can pause updates or toggle **Follow changes** from the Watch bar.
 
 ### Context and token inspector
-Open the sidebar (`Ctrl+B` or `F9`) to inspect word count, byte size, reading time, and heuristic token estimates split across prose (~4.2 chars/token) and fenced code (~3.4 chars/token). Each heading shows its token share and flags sections over 2,000 estimated tokens. For `SKILL.md` files, the inspector checks YAML frontmatter for `name` and `description`.
+Open the sidebar (`Ctrl+B` or `F9`) and switch to **Context** to inspect word count, byte size, reading time, and heuristic token estimates split across prose (~4.2 chars/token) and fenced code (~3.4 chars/token). Each heading shows its token share and flags sections over 2,000 estimated tokens.
+
+For agentic documents, the inspector renders an **Agentic artifact** card (scope, triggers, globs, front-matter keys, and clickable sibling `references/` or `scripts/` links) and runs tailored checks:
+- `SKILL.md`: verifies YAML front-matter contains `name` and `description`.
+- Cursor `.mdc` rules: verifies `description` and `globs` or `alwaysApply`.
+- `agent.md` definitions: verifies a heading or front-matter `name`/`description`.
+- Local links: flags broken relative file links inside the document.
 
 ### Visual diff review
 Press `Ctrl+D` or launch from a terminal with `--git-diff` or `--diff` to compare against the previous watched revision, `git HEAD`, or another file. Diffs display hunk counts, the nearest preceding Markdown heading, and word-level insertions and deletions in Unified or Side-by-Side layout.
 
 ### Review comments (`*.review.md`)
-Select text in Preview and click **Add comment** to attach feedback, then export a sidecar file (`<stem>.review.md`, headed `# Review: <filename>`). Any coding agent can read the quoted excerpt and `Feedback:` block directly without IDE plugins.
+Attach anchored review feedback without leaving Markveil:
+- Click **+ Add** in the **Comments** sidebar, press `Ctrl+Shift+M`, or right-click selected text in Preview and choose **Add Review Comment**.
+- Selections from either Preview or the source Editor prefill the quote alongside the nearest section heading; edit any field and press `Ctrl+Enter` to save.
+- Click **Export…** to write a sidecar file (`<stem>.review.md`, headed `# Review: <filename>`) or **Copy** to place the formatted Markdown on the clipboard.
+- Opening a file with an existing `<stem>.review.md` sidecar loads those comments automatically so you can inspect, edit, or re-export them.
+- Closing a tab or quitting with unexported comments prompts before discarding them.
 
 ### Ask local agent
-Press `Ctrl+Shift+A` to run a locally installed CLI agent (`claude`, `codex`, or `agy`) asynchronously against the active document (bounded to 32,000 characters) with built-in prompts (`Summarize`, `Find Gaps`, `Check Architecture`, `Tighten Prose`) or a custom question.
+Press `Ctrl+Shift+A` to run a locally installed coding-agent CLI asynchronously against the active document (bounded to 32,000 characters) with built-in presets (`Summarize`, `Find Gaps`, `Check Architecture`, `Tighten Prose`) or a custom question.
+
+- **9 supported CLIs:** `claude`, `codex`, `agy`, `cursor-agent`, `opencode`, `kimi`, `gemini`, `cline`, and `devin`.
+- **Desktop-safe `PATH` discovery:** probes `~/.local/bin`, `nvm`/`fnm`/`volta`/`asdf`/`mise` shims, `~/.opencode/bin`, `~/.kimi-code/bin`, `~/.gemini/antigravity/bin`, `~/.cargo/bin`, `~/.bun/bin`, and system directories so desktop launches find CLIs even when login shell profiles were not sourced.
+- **Default backend:** set `preferred_agent` in **Preferences** (or switch backends in the dialog to remember your choice).
 
 ### CLI and stdin piping
 Open multiple tabs, jump directly to `--line` or `--section`, launch split or edit views, or pipe command output into a rendered tab with `... | mdv -`.
 
-### Clipboard studio (`Super+Shift+M`)
-Press `Super+Shift+M` on GNOME or run `md-viewer-clipboard` or `mdv --clipboard` to open clipboard contents in studio mode. A pure-Python `html.parser` converter turns copied rich HTML from browsers or docs into Markdown on demand without running a background daemon.
+### Clipboard studio (`Ctrl+Shift+V` / `Super+Shift+M`)
+Press `Ctrl+Shift+V` inside Markveil, press `Super+Shift+M` globally on GNOME, or run `md-viewer-clipboard` / `mdv --clipboard` to open clipboard contents in studio mode:
+- **On-demand HTML-to-Markdown.** A pure-Python `html.parser` converter turns copied rich HTML from browsers or docs into Markdown without a background daemon.
+- **Smart Markdown preservation.** When plain text already looks like structured Markdown and the HTML payload is only an editor syntax-highlight wrapper, Markveil keeps the original Markdown intact.
+- **Bounded history.** The **History ▾** popover (Welcome view and Clipboard bar) retains up to 15 deduplicated captures tagged `[HTML → MD]` or `[Text]` for quick reopening.
+- **Wayland and X11 reliability.** Reads and writes via GTK clipboard with `wl-paste`/`wl-copy`, `xclip`, and `xsel` fallbacks, and flushes clipboard ownership on shutdown so copied text stays available after closing Markveil.
 
-### Technical file views
-Open `.json`, `.jsonc`, `.yaml`, `.yml`, `.toml`, `.diff`, `.patch`, `.mmd`, `.mermaid`, and `.txt` files directly. JSON, JSONC, YAML, and TOML views display parse validity badges alongside syntax-highlighted or collapsible tree output.
+### Technical & source file views
+Open structured data, diagrams, agentic rules, and source code directly in Markveil:
+- **Structured & diagram files:** `.json`, `.jsonc`, `.yaml`, `.yml`, `.toml`, `.diff`, `.patch`, `.mmd`, `.mermaid`, `.txt`, `.log`, `.csv`, and `.tsv`. JSON, JSONC, YAML, and TOML views display parse validity badges alongside syntax-highlighted or collapsible tree output.
+- **Source & rule files:** `.mdc`, `.rules`, `.cursorrules`, `Makefile`, `Dockerfile`, and common source extensions (`.py`, `.sh`, `.js`, `.ts`, `.tsx`, `.jsx`, `.rs`, `.go`, `.c`, `.cpp`, `.css`, `.html`, `.sql`, `.rb`, `.java`, `.kt`, `.swift`, `.lua`, `.nix`, `.tf`, `.proto`, and more) render with Pygments highlighting and line gutters.
+- **Line-anchor navigation:** clicking local links with `#L42` or `#L10-L20` fragments (for example, `[app.py](mdviewer/app.py#L42)`) opens the file in Markveil and scrolls to and highlights the target line or range.
 
 ## Installation
 
@@ -170,6 +208,8 @@ mdv --clipboard --theme obsidian
 | Toggle sidebar | `Ctrl+B` / `F9` |
 | Find | `Ctrl+F` |
 | Find and replace | `Ctrl+H` |
+| Add review comment | `Ctrl+Shift+M` |
+| Open Clipboard Studio | `Ctrl+Shift+V` |
 | Toggle Watch mode | `Ctrl+Shift+W` |
 | Diff view | `Ctrl+D` |
 | Ask local agent | `Ctrl+Shift+A` |
@@ -200,17 +240,18 @@ mdv --clipboard --theme obsidian
 
 ## Security
 
-Markveil renders untrusted Markdown inside a restricted local WebKit2 context:
+Markveil renders untrusted Markdown inside a restricted local WebKit2 context and bounds filesystem scanning:
 
 1. **Per-render CSP nonces.** Every render generates a fresh `secrets.token_urlsafe(16)` nonce. The document CSP enforces `default-src 'none'`, `script-src 'nonce-<nonce>'`, `connect-src 'none'`, `media-src 'none'`, `object-src 'none'`, and `frame-src 'none'`.
 2. **HTML parser allowlist sanitization.** `mdviewer/sanitizer.py` parses rendered HTML with Python's `html.parser.HTMLParser`. It strips dangerous tags and their content (`script`, `style`, `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`, `noscript`, `template`, `textarea`, `select`, `form`, `meta`, `base`, `link`, `svg`), removes all `on*` event attributes, `srcdoc`, `formaction`, and arbitrary inline `style` (allowing only `text-align` on `th` and `td`), restricts `<input>` to task checkboxes, and rejects `javascript:`, `vbscript:`, `data:text/html`, and `data:image/svg+xml` URLs.
 3. **Strict Mermaid mode.** KaTeX and Mermaid containers are restored from escaped attributes after HTML sanitization, and Mermaid runs with `securityLevel: "strict"`.
 4. **WebKit2 isolation.** WebKit2 settings enforce `allow_universal_access_from_file_urls(False)` and `enable_page_cache(False)`. External links open in the system browser through `decide-policy`.
-5. **Remote image gate.** Remote `http:` and `https:` image sources are blocked by default (`allow_remote_images = False`) and rewritten to `data-blocked-src` placeholders until you allow them.
+5. **Remote image gate & backslash URL hardening.** Remote `http:`, `https:`, and protocol-relative `//` image sources are blocked by default (`allow_remote_images = False`) and rewritten to `data-blocked-src` placeholders until you allow them. Backslashes outside `data:` URIs are normalized to `/` before URL classification so `\\host\img.png` or `/\host/img.png` cannot bypass the gate.
+6. **Agentic scanner denylists.** `mdviewer/agentic_env.py` never traverses session, transcript, or cache directories (`sessions`, `archived_sessions`, `session-env`, `brain`, `conversations`, `projects`, `chats`, `history`, `file-history`, `shell-snapshots`, `paste-cache`, `telemetry`, `backups`, `cache`, `logs`, `debug`, `.git`, `node_modules`, `.venv`, `worktrees`, and others), skips sensitive filenames (`*credentials*`, `*auth*`, `*secret*`, `*token*`, `*accounts*`, `.env*`, `*.sqlite*`, `*.db`, `*.jsonl`, `*.key`, `*.pem`), caps traversal at depth 4 and head reads at 2,048 bytes, and never reads the bodies of config files.
 
 ## Agent skill
 
-Coding agents (Claude Code, Codex, OpenCode, Antigravity) can load [`skills/markveil/SKILL.md`](skills/markveil/SKILL.md) to open plans in Watch mode, launch `--git-diff` reviews, pipe terminal output to `mdv -`, and apply exported `*.review.md` feedback files.
+Coding agents (Claude Code, Codex, OpenCode, Antigravity, Cursor) can load [`skills/markveil/SKILL.md`](skills/markveil/SKILL.md) to open plans in Watch mode, launch `--git-diff` reviews, pipe terminal output to `mdv -`, and apply exported `*.review.md` feedback files.
 
 ## Dependencies
 
