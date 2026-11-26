@@ -416,7 +416,12 @@ def get_client_js(
 
             btn.addEventListener("click", function(e) {{
                 e.preventDefault();
-                var text = (code ? code.innerText : pre.innerText) || "";
+                var lineEls = pre.querySelectorAll(".mdv-code-line");
+                var text = lineEls.length
+                    ? Array.prototype.map.call(lineEls, function(el) {{
+                        return el.textContent || "";
+                    }}).join("\\n")
+                    : ((code ? code.innerText : pre.innerText) || "");
                 copyText(text, function() {{
                     btn.classList.add("copied");
                     btn.textContent = "Copied";
@@ -781,12 +786,43 @@ def get_client_js(
     /* ---------------------------------------------------------------------
      * 9. Scroll / Section / Watch-Follow Restoration & Host Helpers
      * ------------------------------------------------------------------- */
+    function parseLineAnchor(raw) {{
+        var text = String(raw || "").trim();
+        var m = text.match(/^#?L(\\d+)(?:-L?(\\d+))?$/i);
+        if (!m) return null;
+        var start = parseInt(m[1], 10);
+        var end = m[2] ? parseInt(m[2], 10) : start;
+        if (isNaN(start) || start < 1) return null;
+        if (isNaN(end) || end < start) end = start;
+        return {{ start: start, end: end }};
+    }}
+
+    function getNearestVisibleHeadingText() {{
+        var headings = getDocumentHeadings();
+        if (!headings.length) return "";
+        var active = "";
+        for (var i = 0; i < headings.length; i++) {{
+            var rect = headings[i].getBoundingClientRect();
+            if (rect.top <= 96) {{
+                active = cleanHeadingText(headings[i]);
+            }} else {{
+                break;
+            }}
+        }}
+        if (!active && headings.length > 0) {{
+            active = cleanHeadingText(headings[0]);
+        }}
+        return active;
+    }}
+
     function findSectionHeading(query) {{
         if (!query) return null;
-        var exact = document.getElementById(query);
+        var raw = String(query).trim().replace(/^#/, "");
+        if (!raw) return null;
+        var exact = document.getElementById(raw);
         if (exact) return exact;
 
-        var needle = String(query).trim().toLowerCase();
+        var needle = raw.toLowerCase();
         var needleSlug = slugifyText(needle);
         var headings = getDocumentHeadings();
         var partial = null;
@@ -794,15 +830,92 @@ def get_client_js(
             var h = headings[i];
             var hId = (h.id || "").toLowerCase();
             var hText = cleanHeadingText(h).toLowerCase();
-            if (hId === needle || hId === needleSlug || hText === needle) {{
+            if (hId === needle || (needleSlug && hId === needleSlug) || hText === needle) {{
                 return h;
             }}
-            if (!partial && (hText.indexOf(needle) !== -1 || hId.indexOf(needleSlug) !== -1)) {{
+            if (
+                !partial &&
+                (hText.indexOf(needle) !== -1 || (needleSlug && hId.indexOf(needleSlug) !== -1))
+            ) {{
                 partial = h;
             }}
         }}
         return partial;
     }}
+
+    function scrollToLineRange(startLine, endLine, behavior) {{
+        var start = parseInt(startLine, 10);
+        if (isNaN(start) || start < 1) return false;
+        var end = (endLine !== undefined && endLine !== null) ? parseInt(endLine, 10) : start;
+        if (isNaN(end) || end < start) end = start;
+
+        document.querySelectorAll(".mdv-line-highlight").forEach(function(el) {{
+            el.classList.remove("mdv-line-highlight");
+        }});
+
+        var maxEnd = Math.min(end, start + 500);
+        var firstEl = null;
+        for (var ln = start; ln <= maxEnd; ln++) {{
+            var el =
+                document.getElementById("L" + ln) ||
+                document.querySelector('[data-line="' + ln + '"]') ||
+                document.querySelector('[data-source-line="' + ln + '"]');
+            if (el) {{
+                if (!firstEl) firstEl = el;
+                el.classList.add("mdv-line-highlight");
+            }}
+        }}
+        if (firstEl) {{
+            firstEl.scrollIntoView({{ behavior: behavior || scrollBehavior(), block: "center" }});
+            return true;
+        }}
+        return false;
+    }}
+
+    window.__markveilScrollToLine = function(startLine, endLine) {{
+        return scrollToLineRange(startLine, endLine, scrollBehavior());
+    }};
+
+    window.__markveilScrollToHeading = function(slugOrTitle) {{
+        var raw = String(slugOrTitle === undefined || slugOrTitle === null ? "" : slugOrTitle).trim();
+        if (!raw || raw.toLowerCase() === "(preamble)" || raw.toLowerCase() === "preamble") {{
+            window.scrollTo({{ top: 0, behavior: scrollBehavior() }});
+            return true;
+        }}
+        var el = findSectionHeading(raw);
+        if (el) {{
+            el.scrollIntoView({{ behavior: scrollBehavior(), block: "start" }});
+            return true;
+        }}
+        var lineAnchor = parseLineAnchor(raw);
+        if (lineAnchor) {{
+            return scrollToLineRange(lineAnchor.start, lineAnchor.end, scrollBehavior());
+        }}
+        return false;
+    }};
+
+    window.__markveilGetSelectionPayload = function() {{
+        var container = document.querySelector(".markdown-container") || document.body;
+        var quote = "";
+        var heading = "";
+        var sel = window.getSelection();
+        if (sel && !sel.isCollapsed && sel.rangeCount > 0) {{
+            var rawQuote = sel.toString().trim();
+            if (rawQuote) {{
+                var range = sel.getRangeAt(0);
+                var ancestor = range.commonAncestorContainer;
+                var ancestorEl = ancestor && ancestor.nodeType === 3 ? ancestor.parentElement : ancestor;
+                if (ancestorEl && container && container.contains(ancestorEl)) {{
+                    quote = rawQuote;
+                    heading = findNearestHeadingForNode(range.startContainer);
+                }}
+            }}
+        }}
+        if (!heading) {{
+            heading = getNearestVisibleHeadingText();
+        }}
+        return JSON.stringify({{ quote: quote, heading: heading }});
+    }};
 
     function restoreInitialPosition() {{
         if (userScrolled) return;
@@ -816,6 +929,10 @@ def get_client_js(
         }}
 
         if (CONFIG.initialSection) {{
+            var lineAnchor = parseLineAnchor(CONFIG.initialSection);
+            if (lineAnchor && scrollToLineRange(lineAnchor.start, lineAnchor.end, "auto")) {{
+                return;
+            }}
             var target = findSectionHeading(CONFIG.initialSection);
             if (target) {{
                 target.scrollIntoView({{ behavior: "auto", block: "start" }});
@@ -836,12 +953,10 @@ def get_client_js(
 
     window.__mdv = {{
         scrollToSlug: function(slug) {{
-            var el = findSectionHeading(slug);
-            if (el) {{
-                el.scrollIntoView({{ behavior: scrollBehavior(), block: "start" }});
-                return true;
-            }}
-            return false;
+            return window.__markveilScrollToHeading(slug);
+        }},
+        scrollToLine: function(startLine, endLine) {{
+            return window.__markveilScrollToLine(startLine, endLine);
         }},
         scrollToRatio: function(ratio) {{
             var clamped = Math.max(0, Math.min(1, Number(ratio) || 0));

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import difflib
 import html
 import os
@@ -13,6 +14,7 @@ from pathlib import Path
 _FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})(.*)$")
 _ATX_HEADING_RE = re.compile(r"^[ \t]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _INLINE_TOKEN_RE = re.compile(r"\w+|\s+|[^\w\s]+")
+_MAX_INLINE_DIFF_LINES = 200
 
 
 @dataclass
@@ -34,7 +36,7 @@ def compute_changed_lines(old_text: str, new_text: str) -> set[int]:
         return set()
     old_lines = old_text.splitlines()
     new_lines = new_text.splitlines()
-    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=True)
     changed: set[int] = set()
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
         if tag in ("insert", "replace"):
@@ -51,40 +53,42 @@ def _index_headings(lines: list[str]) -> list[tuple[int, str]]:
 
     for idx, line in enumerate(lines, start=1):
         if not in_fence:
-            fm = _FENCE_OPEN_RE.match(line)
-            if fm:
-                seq = fm.group(1)
-                info = fm.group(2)
-                if not (seq[0] == "`" and "`" in info):
-                    in_fence = True
-                    fence_char = seq[0]
-                    fence_len = len(seq)
-                    continue
-            hm = _ATX_HEADING_RE.match(line)
-            if hm:
-                headings.append((idx, f"{hm.group(1)} {hm.group(2).strip()}"))
+            if "`" in line or "~" in line:
+                fm = _FENCE_OPEN_RE.match(line)
+                if fm:
+                    seq = fm.group(1)
+                    info = fm.group(2)
+                    if not (seq[0] == "`" and "`" in info):
+                        in_fence = True
+                        fence_char = seq[0]
+                        fence_len = len(seq)
+                        continue
+            if "#" in line:
+                hm = _ATX_HEADING_RE.match(line)
+                if hm:
+                    headings.append((idx, f"{hm.group(1)} {hm.group(2).strip()}"))
         else:
-            stripped = line.strip()
-            if (
-                stripped
-                and len(stripped) >= fence_len
-                and set(stripped) == {fence_char}
-            ):
-                in_fence = False
-                fence_char = ""
-                fence_len = 0
+            if fence_char in line:
+                stripped = line.strip()
+                if (
+                    stripped
+                    and len(stripped) >= fence_len
+                    and stripped == fence_char * len(stripped)
+                ):
+                    in_fence = False
+                    fence_char = ""
+                    fence_len = 0
     return headings
 
 
 def _nearest_heading(headings: list[tuple[int, str]], line_no_1based: int) -> str | None:
     """Find the nearest Markdown heading at or before line_no_1based."""
-    found: str | None = None
-    for h_line, h_text in headings:
-        if h_line <= line_no_1based:
-            found = h_text
-        else:
-            break
-    return found
+    if not headings:
+        return None
+    idx = bisect.bisect_right(headings, (line_no_1based, "\uffff")) - 1
+    if idx < 0:
+        return None
+    return headings[idx][1]
 
 
 def _render_inline_pair(old_line: str, new_line: str) -> tuple[str, str]:
@@ -94,7 +98,7 @@ def _render_inline_pair(old_line: str, new_line: str) -> tuple[str, str]:
 
     old_tokens = _INLINE_TOKEN_RE.findall(old_line)
     new_tokens = _INLINE_TOKEN_RE.findall(new_line)
-    matcher = difflib.SequenceMatcher(a=old_tokens, b=new_tokens, autojunk=False)
+    matcher = difflib.SequenceMatcher(a=old_tokens, b=new_tokens, autojunk=True)
 
     old_out: list[str] = []
     new_out: list[str] = []
@@ -144,7 +148,7 @@ def render_diff_html(
     """Render escaped semantic HTML diff and return (html, additions, deletions, hunks_count)."""
     old_lines = old_text.splitlines()
     new_lines = new_text.splitlines()
-    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=True)
     groups = list(matcher.get_grouped_opcodes(n=context_lines))
 
     additions = 0
@@ -156,9 +160,6 @@ def render_diff_html(
             deletions += i2 - i1
 
     hunks_count = len(groups)
-    old_headings = _index_headings(old_lines)
-    new_headings = _index_headings(new_lines)
-
     header_html = (
         '<div class="diff-header">'
         f'<span class="diff-labels">{html.escape(old_label)} &rarr; {html.escape(new_label)}</span>'
@@ -175,6 +176,9 @@ def render_diff_html(
             "</div>"
         )
         return body, 0, 0, 0
+
+    old_headings = _index_headings(old_lines)
+    new_headings = _index_headings(new_lines)
 
     is_split = mode == "split"
     table_cls = "diff-table diff-split" if is_split else "diff-table"
@@ -247,10 +251,15 @@ def render_diff_html(
 
                 inline_old: list[str] = []
                 inline_new: list[str] = []
-                for k in range(paired):
-                    o_html, n_html = _render_inline_pair(old_slice[k], new_slice[k])
-                    inline_old.append(o_html)
-                    inline_new.append(n_html)
+                if paired <= _MAX_INLINE_DIFF_LINES:
+                    for k in range(paired):
+                        o_html, n_html = _render_inline_pair(old_slice[k], new_slice[k])
+                        inline_old.append(o_html)
+                        inline_new.append(n_html)
+                else:
+                    for k in range(paired):
+                        inline_old.append(html.escape(old_slice[k]))
+                        inline_new.append(html.escape(new_slice[k]))
                 for k in range(paired, len(old_slice)):
                     inline_old.append(html.escape(old_slice[k]))
                 for k in range(paired, len(new_slice)):
