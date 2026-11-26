@@ -268,3 +268,17 @@ def test_gui_multi_tab_and_readonly_quick_mode(
         assert a.notebook.get_show_tabs() is False
 
     _run_app_scenario(app, _verify)
+
+
+def test_cold_gi_imports_require_gdk3() -> None:
+    """Importing GUI modules in a fresh interpreter must bind Gdk 3.0 without GTK4 conflicts."""
+    import subprocess
+
+    for mod in ("mdviewer.app", "mdviewer.tab", "mdviewer.dialogs", "mdviewer.clipboard"):
+        proc = subprocess.run(
+            [sys.executable, "-W", "error::Warning", "-c", f"import {mod}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert proc.returncode == 0, f"Cold import of {mod} failed: {proc.stderr}"
