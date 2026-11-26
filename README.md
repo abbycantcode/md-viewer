@@ -3,6 +3,12 @@
   <h1>Markveil</h1>
   <p><strong>Native GTK3 + WebKit2 Markdown studio for Linux and local coding-agent workflows.</strong></p>
   <p>Offline KaTeX &amp; Mermaid · Agentic Env browser · Watch mode · Visual diffs · 9 local agent CLIs · Portable <code>*.review.md</code> feedback</p>
+  <p>
+    <a href="https://github.com/abbycantcode/Markveil/actions/workflows/ci.yml"><img src="https://github.com/abbycantcode/Markveil/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/abbycantcode/Markveil/releases/latest"><img src="https://img.shields.io/github/v/release/abbycantcode/Markveil?color=2f664a" alt="Latest Release" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
+    <img src="https://img.shields.io/badge/platform-Linux%20GTK3%20%2B%20WebKit2-2f664a" alt="Linux GTK3 + WebKit2" />
+  </p>
 </div>
 
 <p align="center">
@@ -34,6 +40,14 @@ Tradeoffs: Markveil targets Linux desktops with GTK3 and WebKit2GTK 4.1. It has 
 Folio opens new installations with a forest-green toolbar, sage sidebar, and ivory reading surface. Select a file under **Open documents**, then switch between four sidebar tabs below it: **Outline**, **Context**, **Comments**, and **Agentic Env**. Collapse the sidebar with `Ctrl+B` to give the document more room. When multiple files are open, their tabs move above the document.
 
 Choose **Preview**, **Split**, or **Edit** in the toolbar. The menu contains **Ask local agent**, **Open Clipboard**, theme switching, and preferences. Existing theme and sidebar preferences carry over. To open a document in Folio, run `mdv --theme folio README.md`.
+
+## Live demo: Watch mode & `*.review.md` round-trip
+
+<p align="center">
+  <img src="docs/demo/markveil-watch-review.gif" alt="20-second demo showing a coding agent editing PLAN.md while mdv -w highlights changed blocks live, exporting PLAN.review.md, and applying feedback back into PLAN.md" width="100%" />
+</p>
+
+<p align="center"><sub>20-second loop: coding agent edits <code>PLAN.md</code> on the left while <code>mdv -w</code> highlights changed blocks in place on the right, exports an anchored <code>PLAN.review.md</code> sidecar, and applies the review back live (<a href="docs/demo/markveil-watch-review.mp4">HD MP4</a>).</sub></p>
 
 ## Screenshots
 
@@ -123,21 +137,43 @@ Open structured data, diagrams, agentic rules, and source code directly in Markv
 
 ## Installation
 
-Install system prerequisites on Ubuntu or Debian:
+### 1. Install system prerequisites
+
+**Ubuntu / Debian:**
 
 ```bash
 sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-gtksource-3.0 python3-pygments
 ```
 
-Ensure [`uv`](https://docs.astral.sh/uv/) is installed, then run:
+**Fedora:**
 
 ```bash
+sudo dnf install gtk3 webkit2gtk4.1 gtksourceview3 python3-gobject python3-pygments python3-markdown python3-pyyaml
+```
+
+**Arch Linux (manual or local PKGBUILD):**
+
+```bash
+sudo pacman -S gtk3 webkit2gtk-4.1 gtksourceview3 python-gobject python-pygments python-markdown python-yaml
+```
+
+Or build and install the system package directly with the included [`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD):
+
+```bash
+cd packaging/aur && makepkg -si
+```
+
+### 2. Run `setup.sh` (from a git clone)
+
+```bash
+git clone https://github.com/abbycantcode/Markveil.git
+cd Markveil
 bash setup.sh
 ```
 
-`setup.sh` performs six steps:
+`setup.sh` uses [`uv`](https://docs.astral.sh/uv/) when installed and otherwise falls back to system `python3 -m venv --system-site-packages` (reusing distro `markdown` and `pyyaml` packages when already installed). It performs six steps:
 1. Marks `markveil`, `mdv`, `md-viewer`, `md-viewer-clipboard`, and `md_viewer.py` executable.
-2. Creates `.venv` with `--system-site-packages` via `uv` and installs `markdown` and `pyyaml`.
+2. Creates `.venv` with `--system-site-packages` and ensures `markdown` and `pyyaml` are available.
 3. Verifies GTK3, WebKit2 4.1, GtkSource 300, Pygments, `mdviewer` imports, icons, and bundled KaTeX and Mermaid assets.
 4. Symlinks `markveil`, `mdv`, `md-viewer` (compatibility alias), and `md-viewer-clipboard` into `~/.local/bin/`.
 5. Installs SVG and PNG icons into `~/.local/share/icons/hicolor/`, installs `.desktop` entries into `~/.local/share/applications/`, and sets `markveil.desktop` as the default handler for `text/markdown` and `text/x-markdown` without changing `.json` or `.txt` defaults.
@@ -264,6 +300,10 @@ Coding agents (Claude Code, Codex, OpenCode, Antigravity, Cursor) can load [`ski
 - Pygments (`python3-pygments`)
 - `markdown` and `pyyaml` (installed into `.venv` via `uv`)
 - Bundled offline assets in `assets/vendor/`: KaTeX and Mermaid
+
+## Contributing
+
+Contributions — including distro packaging (AUR, Flatpak, Nix, RPM), bug fixes, and accessibility improvements — are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development setup, test commands, and security invariants.
 
 ## License
 

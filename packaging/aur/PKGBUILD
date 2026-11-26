@@ -1,0 +1,70 @@
+# Maintainer: Abhinav Jha <98319206+abbycantcode@users.noreply.github.com>
+pkgname=markveil
+pkgver=2.0.0
+pkgrel=1
+pkgdesc="Native GTK3 + WebKit2 Markdown studio for Linux and local coding-agent workflows"
+arch=('any')
+url="https://github.com/abbycantcode/Markveil"
+license=('MIT')
+depends=(
+  'python'
+  'gtk3'
+  'webkit2gtk-4.1'
+  'gtksourceview3'
+  'python-gobject'
+  'python-pygments'
+  'python-markdown'
+  'python-yaml'
+)
+optdepends=(
+  'wl-clipboard: Wayland clipboard fallback support'
+  'xclip: X11 clipboard fallback support'
+  'xsel: alternative X11 clipboard fallback support'
+  'git: visual --git-diff reviews against HEAD'
+)
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+# Run `updpkgsums` after tagging/publishing the GitHub release tarball.
+sha256sums=('SKIP')
+
+package() {
+  cd "${srcdir}/Markveil-${pkgver}"
+
+  local appdir="${pkgdir}/usr/share/${pkgname}"
+  install -dm755 "${appdir}"
+  cp -a mdviewer assets skills "${appdir}/"
+  install -Dm755 md_viewer.py "${appdir}/md_viewer.py"
+
+  # Compile bytecode for faster startup
+  python3 -m compileall -q "${appdir}/mdviewer" "${appdir}/md_viewer.py"
+
+  # CLI launchers
+  install -dm755 "${pkgdir}/usr/bin"
+  for bin in markveil mdv md-viewer; do
+    cat <<'EOF' > "${pkgdir}/usr/bin/${bin}"
+#!/bin/sh
+exec /usr/bin/python3 /usr/share/markveil/md_viewer.py "$@"
+EOF
+    chmod 755 "${pkgdir}/usr/bin/${bin}"
+  done
+
+  cat <<'EOF' > "${pkgdir}/usr/bin/md-viewer-clipboard"
+#!/bin/sh
+exec /usr/bin/python3 /usr/share/markveil/md_viewer.py --clipboard "$@"
+EOF
+  chmod 755 "${pkgdir}/usr/bin/md-viewer-clipboard"
+
+  # Desktop entries
+  install -Dm644 markveil.desktop "${pkgdir}/usr/share/applications/markveil.desktop"
+  install -Dm644 md-viewer-clipboard.desktop "${pkgdir}/usr/share/applications/md-viewer-clipboard.desktop"
+
+  # Application icons
+  install -Dm644 assets/icons/markveil.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/markveil.svg"
+  install -Dm644 assets/icons/markveil-256.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/markveil.png"
+  install -Dm644 assets/icons/markveil-128.png "${pkgdir}/usr/share/icons/hicolor/128x128/apps/markveil.png"
+  install -Dm644 assets/icons/markveil-48.png "${pkgdir}/usr/share/icons/hicolor/48x48/apps/markveil.png"
+
+  # License & docs
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -Dm644 SECURITY.md "${pkgdir}/usr/share/doc/${pkgname}/SECURITY.md"
+}

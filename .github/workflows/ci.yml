@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint & Test (GTK3 + WebKit2)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3 \
+            python3-venv \
+            python3-pip \
+            python3-gi \
+            gir1.2-gtk-3.0 \
+            gir1.2-webkit2-4.1 \
+            gir1.2-gtksource-3.0 \
+            python3-pygments \
+            python3-markdown \
+            python3-yaml \
+            xvfb \
+            dbus-x11 \
+            libgl1-mesa-dri \
+            xauth
+
+      - name: Create virtual environment with system site-packages
+        run: |
+          /usr/bin/python3 -m venv --system-site-packages .venv
+          .venv/bin/python -m pip install --no-cache-dir pytest ruff
+
+      - name: Shell syntax & bytecode checks
+        run: |
+          bash -n setup.sh markveil mdv md-viewer md-viewer-clipboard
+          .venv/bin/python -m py_compile md_viewer.py mdviewer/*.py
+
+      - name: Lint with ruff
+        run: .venv/bin/python -m ruff check mdviewer/ tests/ md_viewer.py
+
+      - name: Run full test suite (unit + GTK3/WebKit2 GUI smoke tests)
+        env:
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GDK_BACKEND: x11
+        run: |
+          xvfb-run -a -s "-screen 0 1440x900x24" \
+            dbus-run-session -- .venv/bin/python -m pytest -v
