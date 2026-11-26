@@ -1,11 +1,58 @@
+# Python, virtual environments, and build artifacts
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 *$py.class
-.ruff_cache/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Local AI / coding-agent configuration and review sidecars
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+MEMORY.md
+.cursorrules
+.claude/
+.codex/
+.gemini/
+.cursor/
+.agents/
+.opencode/
+.antigravity/
+.grok/
+*.review.md
+
+# Local development, prototypes, and scratch files
+docs/prototypes/
+scratch/
+tmp/
+*.tmp
+*.bak
+*.orig
+*.log
+
+# Secrets, keys, and local credentials
+.env
+.env.*
+*.pem
+*.key
+*credentials*
+*secret*
+auth.json
+.mcp.json
+
+# Editor and OS metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

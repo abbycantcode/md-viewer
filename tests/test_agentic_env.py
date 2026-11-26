@@ -242,9 +242,8 @@ class TestAgenticEnv:
             project_root=repo_root, include_global=True, force_refresh=False
         )
         assert warm is cold
-        # Project AGENTS.md and skills/markveil/SKILL.md must be discovered
+        # Project skills/markveil/SKILL.md must be discovered
         project_rels = {a.rel_path for a in cold.filter(scope="project")}
-        assert "AGENTS.md" in project_rels
         assert "skills/markveil/SKILL.md" in project_rels
 
         # Safety invariant on real host output

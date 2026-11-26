@@ -249,6 +249,8 @@ Markveil renders untrusted Markdown inside a restricted local WebKit2 context an
 5. **Remote image gate & backslash URL hardening.** Remote `http:`, `https:`, and protocol-relative `//` image sources are blocked by default (`allow_remote_images = False`) and rewritten to `data-blocked-src` placeholders until you allow them. Backslashes outside `data:` URIs are normalized to `/` before URL classification so `\\host\img.png` or `/\host/img.png` cannot bypass the gate.
 6. **Agentic scanner denylists.** `mdviewer/agentic_env.py` never traverses session, transcript, or cache directories (`sessions`, `archived_sessions`, `session-env`, `brain`, `conversations`, `projects`, `chats`, `history`, `file-history`, `shell-snapshots`, `paste-cache`, `telemetry`, `backups`, `cache`, `logs`, `debug`, `.git`, `node_modules`, `.venv`, `worktrees`, and others), skips sensitive filenames (`*credentials*`, `*auth*`, `*secret*`, `*token*`, `*accounts*`, `.env*`, `*.sqlite*`, `*.db`, `*.jsonl`, `*.key`, `*.pem`), caps traversal at depth 4 and head reads at 2,048 bytes, and never reads the bodies of config files.
 
+See [`SECURITY.md`](SECURITY.md) for the full security policy and how to report vulnerabilities privately.
+
 ## Agent skill
 
 Coding agents (Claude Code, Codex, OpenCode, Antigravity, Cursor) can load [`skills/markveil/SKILL.md`](skills/markveil/SKILL.md) to open plans in Watch mode, launch `--git-diff` reviews, pipe terminal output to `mdv -`, and apply exported `*.review.md` feedback files.
@@ -262,3 +264,7 @@ Coding agents (Claude Code, Codex, OpenCode, Antigravity, Cursor) can load [`ski
 - Pygments (`python3-pygments`)
 - `markdown` and `pyyaml` (installed into `.venv` via `uv`)
 - Bundled offline assets in `assets/vendor/`: KaTeX and Mermaid
+
+## License
+
+Markveil is released under the [MIT License](LICENSE).
