@@ -1,11 +1,29 @@
-"""Smart clipboard reading/writing and pure-Python HTML-to-Markdown conversion."""
+"""Smart clipboard reading/writing, bounded history, and pure-Python HTML-to-Markdown."""
 
 from __future__ import annotations
 
 import re
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
+
+CLIPBOARD_HISTORY_MAX = 15
+_PREVIEW_MAX_CHARS = 80
+
+_MD_HEADING_RE = re.compile(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+\S")
+_MD_FENCE_RE = re.compile(r"(?m)^[ \t]{0,3}(?:`{3,}|~{3,})")
+_MD_LINK_RE = re.compile(r"\[[^\]\n]+\]\([^)\n]+\)")
+_MD_TASK_RE = re.compile(r"(?m)^[ \t]*[-*+][ \t]+\[[ xX]\][ \t]+\S")
+_MD_LIST_RE = re.compile(r"(?m)^[ \t]*(?:[-*+]|\d+\.)[ \t]+\S")
+_MD_TABLE_SEP_RE = re.compile(r"(?m)^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*\|[:\- |]*$")
+_MD_FRONT_MATTER_RE = re.compile(r"\A---\r?\n[\s\S]+?\r?\n---\r?(?:\n|\Z)")
+
+_HTML_CONTAINER_TAGS = frozenset(
+    {"html", "head", "body", "meta", "style", "script", "link", "title", "noscript"}
+)
+_HTML_EDITOR_WRAPPER_TAGS = frozenset({"div", "span", "pre", "code", "br", "font"})
 
 
 @dataclass
@@ -15,6 +33,78 @@ class ClipboardPayload:
     text: str
     was_html: bool = False
     raw_html: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ClipboardEntry:
+    """A single bounded clipboard history entry."""
+
+    text: str
+    source: str
+    timestamp: float
+    preview: str
+    char_count: int
+
+
+def _make_preview(text: str, max_chars: int = _PREVIEW_MAX_CHARS) -> str:
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= max_chars:
+        return collapsed
+    return collapsed[: max_chars - 1].rstrip() + "…"
+
+
+class ClipboardHistory:
+    """Thread-safe bounded ring buffer of deduplicated clipboard entries (newest first)."""
+
+    def __init__(self, max_entries: int = CLIPBOARD_HISTORY_MAX) -> None:
+        self._max_entries = max(1, int(max_entries))
+        self._entries: list[ClipboardEntry] = []
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+    def record(self, text: str, source: str = "text") -> ClipboardEntry | None:
+        """Record a non-empty clipboard string, deduplicating and capping at max_entries."""
+        if not text or not text.strip():
+            return None
+        entry = ClipboardEntry(
+            text=text,
+            source=(source or "text").strip() or "text",
+            timestamp=time.time(),
+            preview=_make_preview(text),
+            char_count=len(text),
+        )
+        with self._lock:
+            self._entries = [item for item in self._entries if item.text != text]
+            self._entries.insert(0, entry)
+            if len(self._entries) > self._max_entries:
+                del self._entries[self._max_entries :]
+        return entry
+
+    def entries(self) -> list[ClipboardEntry]:
+        """Return a snapshot of recorded entries, newest first."""
+        with self._lock:
+            return list(self._entries)
+
+    def latest(self) -> ClipboardEntry | None:
+        """Return the most recently recorded entry, or None if empty."""
+        with self._lock:
+            return self._entries[0] if self._entries else None
+
+    def clear(self) -> None:
+        """Clear all recorded clipboard history."""
+        with self._lock:
+            self._entries.clear()
+
+
+_CLIPBOARD_HISTORY = ClipboardHistory(max_entries=CLIPBOARD_HISTORY_MAX)
+
+
+def get_clipboard_history() -> ClipboardHistory:
+    """Return the process-wide ClipboardHistory singleton."""
+    return _CLIPBOARD_HISTORY
 
 
 class _HtmlToMarkdownParser(HTMLParser):
@@ -284,6 +374,66 @@ def html_to_markdown(raw_html: str) -> str:
     return text.strip()
 
 
+class _TagCollector(HTMLParser):
+    """Collect lowercase start tags outside head/style/script for wrapper detection."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.tags: set[str] = set()
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag_l = tag.lower()
+        if tag_l in ("script", "style", "head", "title", "noscript"):
+            self._skip_depth += 1
+            return
+        if self._skip_depth > 0:
+            return
+        if tag_l not in _HTML_CONTAINER_TAGS:
+            self.tags.add(tag_l)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in ("script", "style", "head", "title", "noscript"):
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+
+
+def _looks_like_structured_markdown(text: str) -> bool:
+    """Return True when plain text already contains unmistakable Markdown structure."""
+    if not text or not text.strip():
+        return False
+    if _MD_HEADING_RE.search(text):
+        return True
+    if _MD_FENCE_RE.search(text):
+        return True
+    if _MD_LINK_RE.search(text):
+        return True
+    if _MD_TASK_RE.search(text):
+        return True
+    if _MD_FRONT_MATTER_RE.match(text):
+        return True
+    if _MD_TABLE_SEP_RE.search(text) and "|" in text:
+        return True
+    if len(_MD_LIST_RE.findall(text)) >= 2:
+        return True
+    return False
+
+
+def _is_editor_html_wrapper(raw_html: str) -> bool:
+    """Return True if HTML is merely an editor/syntax-highlight div/pre/span wrapper."""
+    if not raw_html or not raw_html.strip():
+        return False
+    collector = _TagCollector()
+    try:
+        collector.feed(raw_html)
+        collector.close()
+    except Exception:
+        return False
+    if not collector.tags:
+        return True
+    return collector.tags.issubset(_HTML_EDITOR_WRAPPER_TAGS)
+
+
 def _decode_clipboard_bytes(raw: bytes) -> str:
     if not raw:
         return ""
@@ -327,44 +477,7 @@ def _run_cli_paste(cmd: list[str]) -> str:
     return _decode_clipboard_bytes(proc.stdout)
 
 
-def read_clipboard_smart(prefer_html_convert: bool = True) -> ClipboardPayload:
-    """Read clipboard contents, optionally converting HTML clipboard payloads to Markdown."""
-    _gtk, gdk, cb = _get_gtk_clipboard()
-    if cb is not None and gdk is not None:
-        if prefer_html_convert:
-            try:
-                html_atom = gdk.Atom.intern("text/html", False)
-                sel = cb.wait_for_contents(html_atom)
-                if sel is not None:
-                    raw_html = _decode_clipboard_bytes(sel.get_data())
-                    if raw_html.strip():
-                        converted = html_to_markdown(raw_html)
-                        if converted:
-                            return ClipboardPayload(
-                                text=converted, was_html=True, raw_html=raw_html
-                            )
-            except Exception:
-                pass
-        try:
-            text = cb.wait_for_text()
-            if text:
-                return ClipboardPayload(text=text, was_html=False, raw_html="")
-        except Exception:
-            pass
-
-    if prefer_html_convert:
-        for cmd in (
-            ["wl-paste", "--type", "text/html", "--no-newline"],
-            ["xclip", "-selection", "clipboard", "-t", "text/html", "-o"],
-        ):
-            raw_html = _run_cli_paste(cmd)
-            if raw_html.strip():
-                converted = html_to_markdown(raw_html)
-                if converted:
-                    return ClipboardPayload(
-                        text=converted, was_html=True, raw_html=raw_html
-                    )
-
+def _read_cli_plain_text() -> str:
     for cmd in (
         ["wl-paste", "--no-newline"],
         ["xclip", "-selection", "clipboard", "-o"],
@@ -372,22 +485,90 @@ def read_clipboard_smart(prefer_html_convert: bool = True) -> ClipboardPayload:
     ):
         text = _run_cli_paste(cmd)
         if text:
-            return ClipboardPayload(text=text, was_html=False, raw_html="")
+            return text
+    return ""
+
+
+def _resolve_clipboard_payload(
+    plain_text: str,
+    raw_html: str,
+    prefer_html_convert: bool,
+) -> ClipboardPayload:
+    """Choose between plain text and HTML-to-Markdown conversion."""
+    if prefer_html_convert and raw_html and raw_html.strip():
+        if plain_text and _looks_like_structured_markdown(plain_text) and _is_editor_html_wrapper(
+            raw_html
+        ):
+            return ClipboardPayload(text=plain_text, was_html=False, raw_html=raw_html)
+        converted = html_to_markdown(raw_html)
+        if converted:
+            return ClipboardPayload(text=converted, was_html=True, raw_html=raw_html)
+
+    if plain_text:
+        return ClipboardPayload(text=plain_text, was_html=False, raw_html="")
 
     return ClipboardPayload(text="", was_html=False, raw_html="")
 
 
+def _record_payload(payload: ClipboardPayload) -> ClipboardPayload:
+    if payload.text and payload.text.strip():
+        source = "html" if payload.was_html else "text"
+        _CLIPBOARD_HISTORY.record(payload.text, source=source)
+    return payload
+
+
+def read_clipboard_smart(prefer_html_convert: bool = True) -> ClipboardPayload:
+    """Read clipboard contents, preferring clean Markdown over editor HTML wrappers."""
+    _gtk, gdk, cb = _get_gtk_clipboard()
+    if cb is not None and gdk is not None:
+        raw_html = ""
+        plain_text = ""
+        if prefer_html_convert:
+            try:
+                html_atom = gdk.Atom.intern("text/html", False)
+                sel = cb.wait_for_contents(html_atom)
+                if sel is not None:
+                    raw_html = _decode_clipboard_bytes(sel.get_data())
+            except Exception:
+                raw_html = ""
+        if not raw_html.strip() or _is_editor_html_wrapper(raw_html):
+            try:
+                plain_text = cb.wait_for_text() or ""
+            except Exception:
+                plain_text = ""
+        payload = _resolve_clipboard_payload(plain_text, raw_html, prefer_html_convert)
+        if payload.text:
+            return _record_payload(payload)
+
+    raw_html = ""
+    if prefer_html_convert:
+        for cmd in (
+            ["wl-paste", "--type", "text/html", "--no-newline"],
+            ["xclip", "-selection", "clipboard", "-t", "text/html", "-o"],
+        ):
+            candidate = _run_cli_paste(cmd)
+            if candidate.strip():
+                raw_html = candidate
+                break
+
+    plain_text = ""
+    if not raw_html.strip() or _is_editor_html_wrapper(raw_html):
+        plain_text = _read_cli_plain_text()
+
+    payload = _resolve_clipboard_payload(plain_text, raw_html, prefer_html_convert)
+    return _record_payload(payload)
+
+
 def write_clipboard_text(text: str) -> bool:
-    """Write plain text to the system clipboard via GTK or CLI fallback."""
+    """Write plain text to the system clipboard via GTK (fast path) or non-blocking CLI fallback."""
     _gtk, _gdk, cb = _get_gtk_clipboard()
-    wrote_gtk = False
     if cb is not None:
         try:
             cb.set_text(text, -1)
             cb.store()
-            wrote_gtk = True
+            return True
         except Exception:
-            wrote_gtk = False
+            pass
 
     for cmd in (
         ["wl-copy"],
@@ -395,12 +576,14 @@ def write_clipboard_text(text: str) -> bool:
         ["xsel", "--clipboard", "--input"],
     ):
         try:
+            # Never capture stdout/stderr: daemonized xclip/wl-copy inherits pipes and blocks.
             proc = subprocess.run(
                 cmd,
                 input=text,
                 text=True,
                 shell=False,
-                capture_output=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 timeout=3,
             )
             if proc.returncode == 0:
@@ -408,4 +591,4 @@ def write_clipboard_text(text: str) -> bool:
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             continue
 
-    return wrote_gtk
+    return False
