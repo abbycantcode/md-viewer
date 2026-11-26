@@ -39,7 +39,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
 Run lint and shell syntax checks before opening a PR:
 
 ```bash
-ruff check mdviewer/ tests/ md_viewer.py
+ruff check --select E4,E7,E9,F mdviewer/ tests/ md_viewer.py
 bash -n setup.sh markveil mdv md-viewer md-viewer-clipboard
 ```
 

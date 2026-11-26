@@ -48,7 +48,7 @@ jobs:
           .venv/bin/python -m py_compile md_viewer.py mdviewer/*.py
 
       - name: Lint with ruff
-        run: .venv/bin/python -m ruff check mdviewer/ tests/ md_viewer.py
+        run: .venv/bin/python -m ruff check --select E4,E7,E9,F mdviewer/ tests/ md_viewer.py
 
       - name: Run full test suite (unit + GTK3/WebKit2 GUI smoke tests)
         env:
