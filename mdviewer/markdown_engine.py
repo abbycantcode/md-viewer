@@ -1,4 +1,4 @@
-"""Hardened Markdown & technical-file rendering engine for md-viewer v2."""
+"""Hardened Markdown and technical-file rendering engine for Markveil."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ except Exception:
     GLib = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
-# Optional Wave 1 sibling modules (with built-in fallbacks prior to merge)
+# Theme and client JS imports (with minimal built-in fallbacks)
 # ---------------------------------------------------------------------------
 _DEFAULT_FALLBACK_CSS = """\
 :root {

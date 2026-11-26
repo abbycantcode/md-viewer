@@ -1,4 +1,4 @@
-"""Client-side JavaScript generator for the WebKit2 document view in md-viewer v2.
+"""Client-side JavaScript generator for the WebKit2 document view in Markveil.
 
 Provides offline KaTeX math rendering, strict-security Mermaid rendering with zoom/SVG
 copy controls, code-block copy headers, heading anchor links, interactive task

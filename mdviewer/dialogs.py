@@ -1,4 +1,4 @@
-"""Welcome view and modal/utility dialogs for md-viewer v2."""
+"""Welcome view and modal/utility dialogs for Markveil."""
 
 from __future__ import annotations
 
@@ -176,7 +176,7 @@ class WelcomeView(Gtk.ScrolledWindow):
         if not existing:
             row = Gtk.ListBoxRow()
             row.set_activatable(False)
-            lbl = Gtk.Label(label="No recent files yet — open a Markdown file or drag one here.")
+            lbl = Gtk.Label(label="No recent files yet. Open a Markdown file or drag one here.")
             lbl.get_style_context().add_class("muted-label")
             lbl.set_xalign(0.0)
             lbl.set_margin_top(6)

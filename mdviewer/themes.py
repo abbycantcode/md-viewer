@@ -1,4 +1,4 @@
-"""Curated editorial themes and document CSS generation for md-viewer v2.
+"""Curated editorial themes and document CSS generation for Markveil.
 
 Design direction: "Editorial Ink & Technical Precision" — high-craft native Linux
 reading and technical review typography, 72ch prose measure, 1px hairline borders,

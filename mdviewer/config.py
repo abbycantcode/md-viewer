@@ -1,4 +1,4 @@
-"""Persistent configuration management for md-viewer."""
+"""Persistent configuration management for Markveil."""
 
 from __future__ import annotations
 

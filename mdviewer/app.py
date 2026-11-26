@@ -1,4 +1,4 @@
-"""Main GTK3 Application, multi-tab window, HeaderBar, StatusBar, and shortcuts for md-viewer v2."""
+"""Main GTK3 Application, multi-tab window, HeaderBar, StatusBar, and shortcuts for Markveil."""
 
 from __future__ import annotations
 

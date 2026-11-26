@@ -47,7 +47,7 @@ def build_gtk_css(theme_id: str, zoom_level: float = 1.0) -> str:
     editor_pt = max(8, min(28, int(round(11 * clamped_zoom))))
 
     return f"""\
-/* md-viewer v2 GTK3 theme: {t.id} */
+/* Markveil GTK3 theme: {t.id} */
 
 window,
 window.background,

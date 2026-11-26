@@ -1,8 +1,8 @@
-# Repository Guidelines for Agents
+# Repository guidelines
 
-**Markveil** (`markveil` / `mdv`) is a native Linux GTK3 + WebKit2 Markdown studio with modular pure-Python engines under `mdviewer/` and unit/GUI tests under `tests/`.
+**Markveil** (`markveil` / `mdv`) is a native Linux GTK3 + WebKit2 Markdown studio with modular Python engines under `mdviewer/` and unit/GUI tests under `tests/`.
 
-## Directory Layout
+## Directory layout
 
 ```text
 .
@@ -44,7 +44,7 @@
     └── test_gui_smoke.py         # Live GTK3 + WebKit2 multi-tab, Watch Mode, theme, quick/readonly tests
 ```
 
-## Verification Commands
+## Verification commands
 
 Run all checks from the repository root after editing code or scripts:
 
@@ -64,7 +64,7 @@ bash -n setup.sh markveil mdv md-viewer md-viewer-clipboard
 
 Note: In worktrees without a local `.venv`, use `/home/abby/Tools/md-viewer/.venv/bin/python -m pytest` (with `PYTHONPATH=.` if needed) or `pytest` on PATH.
 
-## GUI Smoke Test
+## GUI smoke test
 
 Run a quick startup check when a display (or `xvfb-run`) is available:
 
@@ -78,7 +78,7 @@ xvfb-run -a timeout 5 .venv/bin/python md_viewer.py README.md || true
 
 ## Invariants
 
-- **Dependencies**: Zero new third-party Python packages beyond `markdown` and `pyyaml` (plus system `gi` / GTK3 / WebKit2 4.1 / GtkSource 300 / Pygments). Keep everything offline-first.
-- **Security**: Never bypass `mdviewer/sanitizer.py` with regex HTML cleaning, never weaken `_build_csp` (`connect-src 'none'`, per-render nonces), never enable `allow_universal_access_from_file_urls`, and keep Mermaid at `securityLevel: "strict"`.
-- **MIME scope**: Register only `text/markdown` and `text/x-markdown` in `markveil.desktop` and `setup.sh` so user `.json` or `.txt` defaults are untouched.
-- **Desktop portability**: Keep GNOME `gsettings` calls guarded behind writability checks in `setup.sh`.
+- **Dependencies.** Zero new third-party Python packages beyond `markdown` and `pyyaml` (plus system `gi`, GTK3, WebKit2 4.1, GtkSource 300, and Pygments). Keep everything offline-first.
+- **Security.** Never bypass `mdviewer/sanitizer.py` with regex HTML cleaning, never weaken `_build_csp` (`connect-src 'none'`, per-render nonces), never enable `allow_universal_access_from_file_urls`, and keep Mermaid at `securityLevel: "strict"`.
+- **MIME scope.** Register only `text/markdown` and `text/x-markdown` in `markveil.desktop` and `setup.sh` so user `.json` or `.txt` defaults are untouched.
+- **Desktop portability.** Keep GNOME `gsettings` calls guarded behind writability checks in `setup.sh`.

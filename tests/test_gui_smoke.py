@@ -1,4 +1,4 @@
-"""Real GTK3 + WebKit2 GUI smoke tests for md-viewer v2."""
+"""Real GTK3 + WebKit2 GUI smoke tests for Markveil."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ tags: [gtk3, webkit2, watch-mode]
 
 # Smoke Studio
 
-Introductory paragraph for **md-viewer v2** verification.
+Introductory paragraph for **Markveil** verification.
 
 ## Task & Table
 

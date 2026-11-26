@@ -1,4 +1,4 @@
-"""Command-line argument parsing and application launcher for md-viewer."""
+"""Command-line argument parsing and application launcher for Markveil."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ THEME_CHOICES = ("auto", "paper", "obsidian", "sepia", "nordic")
 
 @dataclass
 class LaunchOptions:
-    """Parsed CLI launch configuration for md-viewer."""
+    """Parsed CLI launch configuration for Markveil."""
 
     files: list[str]
     stdin_text: str | None = None
@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Create the argument parser for Markveil."""
     parser = argparse.ArgumentParser(
         prog="markveil",
-        description="Markveil — Native Markdown studio for Linux and local coding-agent workflows.",
+        description="Markveil: native Markdown studio for Linux and local coding-agent workflows.",
     )
     parser.add_argument(
         "files",
