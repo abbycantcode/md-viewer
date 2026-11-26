@@ -472,6 +472,98 @@ def test_agentic_classification_strip_and_xss_escaping() -> None:
     assert "&lt;script&gt;" in body_section
     assert "&lt;img src=x onerror=" in body_section
     assert "&lt;svg onload=" in body_section
+    assert '<span class="mdv-agentic-sep"> — </span>' in body_section
+
+
+def test_agentic_strip_deduplicates_env_scope_and_separates_name_desc() -> None:
+    meta = {
+        "env_source": "project",
+        "scope": "project",
+        "kind": "skill",
+        "name": "markveil",
+        "description": "Use when reviewing Markdown files.",
+    }
+    res = render_document("# Skill\n", file_path="/repo/skills/markveil/SKILL.md", agentic_meta=meta)
+    body = res.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    strip = body.split("</section>")[0]
+    assert strip.count(">Project<") == 1
+    assert 'class="mdv-agentic-pill mdv-agentic-pill-env">Project<' in strip
+    assert 'class="mdv-agentic-pill mdv-agentic-pill-kind">Skill<' in strip
+    assert "mdv-agentic-pill-scope" not in strip
+    assert (
+        '<span class="mdv-agentic-name">markveil</span>'
+        '<span class="mdv-agentic-sep"> — </span>'
+        '<span class="mdv-agentic-desc">Use when reviewing Markdown files.</span>'
+    ) in strip
+
+    # Only name (no description) should not emit a dangling separator.
+    only_name = render_document("# Skill\n", agentic_meta={"env_source": "claude", "name": "solo"})
+    only_name_body = only_name.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    assert "mdv-agentic-sep" not in only_name_body
+
+
+def test_source_and_text_blank_line_preservation_matches_md_viewer_py() -> None:
+    from html.parser import HTMLParser
+
+    class _CodeLineExtractor(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.lines: list[str] = []
+            self._depth = 0
+            self._buf: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            cls = dict(attrs).get("class") or ""
+            if self._depth > 0:
+                self._depth += 1
+            elif "mdv-code-line" in cls.split():
+                self._depth = 1
+                self._buf = []
+
+        def handle_endtag(self, tag: str) -> None:
+            if self._depth > 0:
+                self._depth -= 1
+                if self._depth == 0:
+                    self.lines.append("".join(self._buf))
+
+        def handle_data(self, data: str) -> None:
+            if self._depth > 0:
+                self._buf.append(data)
+
+    repo_root = Path(__file__).resolve().parent.parent
+    src_path = repo_root / "md_viewer.py"
+    src_text = src_path.read_text(encoding="utf-8")
+    res = render_document(src_text, file_path=str(src_path))
+    assert res.file_kind == "code"
+
+    body = res.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    extractor = _CodeLineExtractor()
+    extractor.feed(body)
+    extractor.close()
+
+    expected_lines = src_text.splitlines()
+    assert len(extractor.lines) == len(expected_lines)
+    # Every span carries a trailing newline (preserving blank lines natively without spaces).
+    assert all(line.endswith("\n") for line in extractor.lines)
+    # Blank lines contain "\n" rather than a bogus space " ".
+    blank_indices = [i for i, line in enumerate(expected_lines) if line == ""]
+    assert blank_indices, "Expected blank lines in md_viewer.py"
+    for idx in blank_indices:
+        assert extractor.lines[idx] == "\n"
+    extracted_joined = "\n".join(line.rstrip("\r\n") for line in extractor.lines)
+    assert extracted_joined == src_text.rstrip("\n")
+
+    # Plain-text document preserves consecutive blank lines without inserting spaces.
+    plain_src = "alpha\n\n\nbeta\n"
+    txt_res = render_document(plain_src, file_path="notes.txt")
+    txt_body = txt_res.html.split('<div class="markdown-container">')[1].split("<script nonce=")[0]
+    txt_extractor = _CodeLineExtractor()
+    txt_extractor.feed(txt_body)
+    txt_extractor.close()
+    assert txt_extractor.lines == ["alpha\n", "\n", "\n", "beta\n"]
+    assert "".join(txt_extractor.lines) == plain_src
+    # No stray whitespace/newlines between adjacent line divs in pre-wrap container.
+    assert "</div><div id=\"L2\"" in txt_body
 
 
 def test_client_js_helpers_and_theme_css_invariants() -> None:
@@ -479,6 +571,7 @@ def test_client_js_helpers_and_theme_css_invariants() -> None:
     assert "window.__markveilScrollToLine" in js
     assert "window.__markveilScrollToHeading" in js
     assert "window.__markveilGetSelectionPayload" in js
+    assert "window.__markveilExtractCodeText" in js
     assert 'securityLevel: "strict"' in js
     assert "mdv-line-highlight" in js
     assert "(preamble)" in js
@@ -489,11 +582,14 @@ def test_client_js_helpers_and_theme_css_invariants() -> None:
             ".mdv-agentic-strip",
             ".mdv-agentic-pill",
             ".mdv-agentic-meta",
+            ".mdv-agentic-sep",
             ".mdv-agentic-links",
             ".mdv-code-line",
             ".mdv-line-highlight",
         ):
             assert cls in css, f"Missing {cls} in theme {theme_id}"
+        copy_btn_block = css.split(".code-copy-btn {")[1].split("}")[0]
+        assert "user-select: none;" in copy_btn_block
         assert "Bitstream Charter" in css
         assert "IBM Plex Sans" in css
         assert "JetBrains Mono" in css

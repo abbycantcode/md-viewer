@@ -489,15 +489,53 @@ class TestClipboard:
 
     def test_write_clipboard_gtk_returns_immediately_without_cli(self):
         fake_cb = mock.MagicMock()
+        # Simulate slow Wayland/XWayland clipboard manager persistence on store().
+        fake_cb.store.side_effect = lambda: time.sleep(0.08)
         with (
             mock.patch.object(clipboard, "_get_gtk_clipboard", return_value=(object(), object(), fake_cb)),
             mock.patch("mdviewer.clipboard.subprocess.run") as run_mock,
         ):
+            t0 = time.perf_counter()
             ok = clipboard.write_clipboard_text("hello gtk")
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
         assert ok is True
+        assert elapsed_ms < 10.0, f"Interactive GTK clipboard write took {elapsed_ms:.2f}ms"
         fake_cb.set_text.assert_called_once_with("hello gtk", -1)
-        fake_cb.store.assert_called_once()
+        fake_cb.store.assert_not_called()
         run_mock.assert_not_called()
+
+    def test_write_clipboard_store_immediately_and_flush_clipboard(self):
+        fake_cb = mock.MagicMock()
+        with mock.patch.object(clipboard, "_get_gtk_clipboard", return_value=(object(), object(), fake_cb)):
+            assert clipboard.write_clipboard_text("persist now", store_immediately=True) is True
+            fake_cb.set_text.assert_called_once_with("persist now", -1)
+            fake_cb.store.assert_called_once()
+
+            fake_cb.store.reset_mock()
+            clipboard.flush_clipboard()
+            fake_cb.store.assert_called_once()
+
+        # flush_clipboard must be safe when GTK is unavailable or store() raises.
+        with mock.patch.object(clipboard, "_get_gtk_clipboard", return_value=(None, None, None)):
+            clipboard.flush_clipboard()
+
+        failing_cb = mock.MagicMock()
+        failing_cb.store.side_effect = RuntimeError("display gone")
+        with mock.patch.object(clipboard, "_get_gtk_clipboard", return_value=(object(), object(), failing_cb)):
+            clipboard.flush_clipboard()
+
+    def test_write_clipboard_gtk_real_latency_under_10ms(self):
+        """When a live GTK display is present, interactive write_clipboard_text completes in <10ms."""
+        _gtk, _gdk, cb = clipboard._get_gtk_clipboard()
+        if cb is None:
+            pytest.skip("No GTK display available")
+        # Warm up once, then measure interactive write latency.
+        assert clipboard.write_clipboard_text("markveil-latency-warmup") is True
+        t0 = time.perf_counter()
+        ok = clipboard.write_clipboard_text("markveil-latency-check")
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        assert ok is True
+        assert elapsed_ms < 10.0, f"Live GTK write_clipboard_text took {elapsed_ms:.2f}ms (>= 10ms)"
 
     def test_write_clipboard_non_blocking_with_daemonized_xclip(self, tmp_path, monkeypatch):
         """Simulate xclip forking a background daemon holding open stdout/stderr descriptors."""
@@ -577,7 +615,20 @@ class TestClipboard:
         assert len(entries_after) == 15
         assert entries_after[0].text == dup_text
         assert entries_after[0].source == "html"
+        assert entries_after[0].was_html is True
+        assert entries_after[1].was_html is False
         assert sum(1 for e in entries_after if e.text == dup_text) == 1
+
+        # was_html keyword argument sets source cleanly and overrides default source
+        html_entry = history.record("## From HTML", was_html=True)
+        assert html_entry is not None
+        assert html_entry.source == "html"
+        assert html_entry.was_html is True
+
+        plain_entry = history.record("Plain override", source="html", was_html=False)
+        assert plain_entry is not None
+        assert plain_entry.source == "text"
+        assert plain_entry.was_html is False
 
         history.clear()
         assert history.entries() == []

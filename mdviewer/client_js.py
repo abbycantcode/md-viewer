@@ -382,6 +382,23 @@ def get_client_js(
         return map[lower] || lang.toUpperCase();
     }}
 
+    function extractCodeText(pre) {{
+        if (!pre) return "";
+        var lineEls = pre.querySelectorAll(".mdv-code-line");
+        if (lineEls.length) {{
+            return Array.prototype.map.call(lineEls, function(el) {{
+                return (el.textContent || "").replace(/[\\r\\n]+$/, "");
+            }}).join("\\n");
+        }}
+        var target = pre.querySelector("code") || pre;
+        var clone = target.cloneNode(true);
+        clone.querySelectorAll(".code-copy-btn").forEach(function(btn) {{
+            btn.remove();
+        }});
+        return (clone.textContent || "").replace(/\\r?\\n$/, "");
+    }}
+    window.__markveilExtractCodeText = extractCodeText;
+
     function setupCodeBlocks() {{
         document.querySelectorAll("div.highlight").forEach(function(block) {{
             if (block.querySelector(".code-header")) return;
@@ -416,12 +433,7 @@ def get_client_js(
 
             btn.addEventListener("click", function(e) {{
                 e.preventDefault();
-                var lineEls = pre.querySelectorAll(".mdv-code-line");
-                var text = lineEls.length
-                    ? Array.prototype.map.call(lineEls, function(el) {{
-                        return el.textContent || "";
-                    }}).join("\\n")
-                    : ((code ? code.innerText : pre.innerText) || "");
+                var text = extractCodeText(pre);
                 copyText(text, function() {{
                     btn.classList.add("copied");
                     btn.textContent = "Copied";

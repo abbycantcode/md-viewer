@@ -45,6 +45,11 @@ class ClipboardEntry:
     preview: str
     char_count: int
 
+    @property
+    def was_html(self) -> bool:
+        """Return True when this entry originated from HTML-to-Markdown conversion."""
+        return self.source == "html"
+
 
 def _make_preview(text: str, max_chars: int = _PREVIEW_MAX_CHARS) -> str:
     collapsed = " ".join(text.split())
@@ -65,13 +70,25 @@ class ClipboardHistory:
         with self._lock:
             return len(self._entries)
 
-    def record(self, text: str, source: str = "text") -> ClipboardEntry | None:
+    def record(
+        self,
+        text: str,
+        source: str = "text",
+        *,
+        was_html: bool | None = None,
+    ) -> ClipboardEntry | None:
         """Record a non-empty clipboard string, deduplicating and capping at max_entries."""
         if not text or not text.strip():
             return None
+        if was_html is not None:
+            resolved_source = "html" if was_html else "text"
+        elif isinstance(source, bool):
+            resolved_source = "html" if source else "text"
+        else:
+            resolved_source = (source or "text").strip() or "text"
         entry = ClipboardEntry(
             text=text,
-            source=(source or "text").strip() or "text",
+            source=resolved_source,
             timestamp=time.time(),
             preview=_make_preview(text),
             char_count=len(text),
@@ -559,13 +576,24 @@ def read_clipboard_smart(prefer_html_convert: bool = True) -> ClipboardPayload:
     return _record_payload(payload)
 
 
-def write_clipboard_text(text: str) -> bool:
+def flush_clipboard() -> None:
+    """Persist GTK clipboard ownership to the system clipboard manager on shutdown."""
+    _gtk, _gdk, cb = _get_gtk_clipboard()
+    if cb is not None:
+        try:
+            cb.store()
+        except Exception:
+            pass
+
+
+def write_clipboard_text(text: str, *, store_immediately: bool = False) -> bool:
     """Write plain text to the system clipboard via GTK (fast path) or non-blocking CLI fallback."""
     _gtk, _gdk, cb = _get_gtk_clipboard()
     if cb is not None:
         try:
             cb.set_text(text, -1)
-            cb.store()
+            if store_immediately:
+                cb.store()
             return True
         except Exception:
             pass

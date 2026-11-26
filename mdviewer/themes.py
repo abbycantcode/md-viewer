@@ -877,6 +877,7 @@ code {{
     font-size: 0.73rem;
     font-weight: 500;
     cursor: pointer;
+    user-select: none;
     transition: color 0.14s ease, border-color 0.14s ease, background-color 0.14s ease;
 }}
 
@@ -2033,7 +2034,10 @@ del.diff-word,
 .mdv-agentic-name {{
     color: var(--heading-color);
     font-weight: 600;
-    margin-right: 0.4rem;
+}}
+
+.mdv-agentic-sep {{
+    color: var(--muted-color);
 }}
 
 .mdv-agentic-desc {{

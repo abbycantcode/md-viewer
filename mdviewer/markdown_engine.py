@@ -359,7 +359,7 @@ class _SourceCodeHtmlFormatter(CustomHtmlFormatter):
                 body = line.rstrip("\r\n")
                 yield 1, (
                     f'<span id="L{line_no}" data-line="{line_no}" '
-                    f'class="mdv-code-line"{changed_attr}>{body}</span>'
+                    f'class="mdv-code-line"{changed_attr}>{body}\n</span>'
                 )
             else:
                 yield t, line
@@ -1887,10 +1887,10 @@ def _render_text_document(text: str, changed_lines: set[int] | None) -> str:
         changed_attr = ' data-changed="true"' if idx in changed else ""
         parts.append(
             f'<div id="L{idx}" data-line="{idx}" class="plain-text-line mdv-code-line"{changed_attr}>'
-            f'{html.escape(line) or " "}</div>'
+            f"{html.escape(line)}\n</div>"
         )
     parts.append("</div>")
-    return "\n".join(parts)
+    return "".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -1945,6 +1945,7 @@ def _render_agentic_strip_html(agentic_meta: dict | None) -> str:
 
     pills: list[str] = []
     env_raw = str(agentic_meta.get("env_source") or "").strip()
+    env_label = ""
     if env_raw:
         env_label = _ENV_DISPLAY_NAMES.get(env_raw.lower(), env_raw.title())
         pills.append(
@@ -1963,10 +1964,11 @@ def _render_agentic_strip_html(agentic_meta: dict | None) -> str:
     scope_raw = str(agentic_meta.get("scope") or "").strip()
     if scope_raw:
         scope_label = scope_raw.title()
-        pills.append(
-            f'<span class="mdv-agentic-pill mdv-agentic-pill-scope">'
-            f"{html.escape(scope_label, quote=True)}</span>"
-        )
+        if scope_raw.lower() != env_raw.lower() and scope_label.lower() != env_label.lower():
+            pills.append(
+                f'<span class="mdv-agentic-pill mdv-agentic-pill-scope">'
+                f"{html.escape(scope_label, quote=True)}</span>"
+            )
 
     if agentic_meta.get("always_apply"):
         pills.append('<span class="mdv-agentic-pill mdv-agentic-pill-flag">Always Apply</span>')
@@ -2036,12 +2038,17 @@ def _render_agentic_strip_html(agentic_meta: dict | None) -> str:
                 if name
                 else ""
             )
+            sep_html = (
+                '<span class="mdv-agentic-sep"> — </span>'
+                if (name and desc)
+                else ""
+            )
             desc_html = (
                 f'<span class="mdv-agentic-desc">{html.escape(desc, quote=True)}</span>'
                 if desc
                 else ""
             )
-            parts.append(f"<div>{name_html}{desc_html}</div>")
+            parts.append(f"<div>{name_html}{sep_html}{desc_html}</div>")
         if triggers:
             chips = "".join(
                 f'<span class="mdv-agentic-tag">{html.escape(t, quote=True)}</span>'
