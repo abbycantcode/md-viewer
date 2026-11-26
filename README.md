@@ -6,7 +6,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/hero-obsidian-studio.png" alt="Markveil in Obsidian theme with Watch mode, Context token inspector, Mermaid diagram, and GFM rendering" width="100%" />
+  <img src="docs/screenshots/folio-studio.png" alt="Markveil’s Folio workspace with an open-document list, heading outline, and rendered revision-flow diagram" width="100%" />
 </p>
 
 ## Why Markveil
@@ -26,13 +26,19 @@ Most Linux Markdown tools fall into two groups: Electron workspaces that consume
 
 Tradeoffs: Markveil targets Linux desktops with GTK3 and WebKit2GTK 4.1. It has no cloud sync, vault graph, or plugin marketplace.
 
+## The Folio workspace
+
+Folio opens new installations with a forest-green toolbar, sage sidebar, and ivory reading surface. Select a file under **Open documents**, then use **Outline**, **Context**, or **Comments** below it. Collapse the sidebar with `Ctrl+B` to give the document more room. When multiple files are open, their tabs move above the document.
+
+Choose **Preview**, **Split**, or **Edit** in the toolbar. The menu contains **Ask local agent**, theme switching, and preferences. Existing theme and sidebar preferences carry over. To open a document in Folio, run `mdv --theme folio README.md`.
+
 ## Screenshots
 
 <table>
   <tr>
     <td width="50%" valign="top">
       <img src="docs/screenshots/split-paper-editor.png" alt="Split live preview and editor in Paper theme with Outline sidebar" width="100%" />
-      <p align="center"><strong>Split view (Paper).</strong> <code>GtkSourceView</code> with debounced live preview, proportional scroll sync, multi-tab strip, and collapsible Outline TOC.</p>
+      <p align="center"><strong>Split view (Paper).</strong> <code>GtkSourceView</code> with debounced live preview, proportional scroll sync, open-document navigation, and a collapsible heading outline.</p>
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/visual-diff-review.png" alt="Side-by-side visual diff review in Obsidian theme" width="100%" />
@@ -40,8 +46,12 @@ Tradeoffs: Markveil targets Linux desktops with GTK3 and WebKit2GTK 4.1. It has 
     </td>
   </tr>
   <tr>
-    <td colspan="2" align="center">
-      <img src="docs/screenshots/sepia-review-comments.png" alt="Sepia reading theme with anchored Review Comments sidebar" width="85%" />
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/hero-obsidian-studio.png" alt="Watch mode with the Context inspector in Obsidian" width="100%" />
+      <p align="center"><strong>Watch mode (Obsidian).</strong> Follow revisions on disk and inspect the document’s token estimate.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/sepia-review-comments.png" alt="Sepia reading theme with anchored Review Comments sidebar" width="100%" />
       <p align="center"><strong>Portable review comments (Sepia).</strong> Select text in Preview, attach feedback, and export a <code>*.review.md</code> file for any coding agent.</p>
     </td>
   </tr>
@@ -140,7 +150,7 @@ mdv --clipboard --theme obsidian
 | `--git-diff FILE` | Compare working-tree file against `git HEAD` |
 | `--line N` | Jump to 1-based line `N` on open |
 | `--section NAME` | Jump to heading `NAME` on open |
-| `--theme NAME` | Override theme: `auto`, `paper`, `obsidian`, `sepia`, `nordic` |
+| `--theme NAME` | Override theme: `auto`, `folio`, `paper`, `obsidian`, `sepia`, `nordic` |
 | `--version` | Print Markveil version and exit |
 
 ## Keyboard shortcuts
@@ -163,7 +173,7 @@ mdv --clipboard --theme obsidian
 | Toggle Watch mode | `Ctrl+Shift+W` |
 | Diff view | `Ctrl+D` |
 | Ask local agent | `Ctrl+Shift+A` |
-| Cycle theme (`Paper` / `Obsidian` / `Sepia` / `Nordic`) | `Ctrl+T` |
+| Cycle theme (`Folio` / `Paper` / `Obsidian` / `Sepia` / `Nordic`) | `Ctrl+T` |
 | Print or export PDF | `Ctrl+P` |
 | Zoom | `Ctrl++` / `Ctrl+-` / `Ctrl+0` |
 | Link history | `Alt+Left` / `Alt+Right` |

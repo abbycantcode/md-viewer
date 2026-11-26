@@ -13,7 +13,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
 gi.require_version("GtkSource", "300")
 
-from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from mdviewer.cli import LaunchOptions  # noqa: E402
 from mdviewer.clipboard import read_clipboard_smart, write_clipboard_text  # noqa: E402
@@ -123,7 +123,7 @@ class MarkdownViewerApp(Gtk.Application):
 
         self.quick_mode: bool = bool(self.launch_options.quick)
         self.system_dark: bool = False
-        self.resolved_theme: str = "paper"
+        self.resolved_theme: str = "folio"
         self.custom_css: str = _read_custom_css(self.config.custom_css_path)
 
         self.window: Gtk.ApplicationWindow | None = None
@@ -134,7 +134,8 @@ class MarkdownViewerApp(Gtk.Application):
         self._css_provider: Gtk.CssProvider | None = None
         self._suppress_ui_signals: bool = False
         self._status_toast_timer: int = 0
-        self._tab_label_widgets: dict[DocumentTab, dict[str, Gtk.Widget]] = {}
+        self._tab_labels: dict[DocumentTab, list[tuple[Gtk.Label, Gtk.Label]]] = {}
+        self._document_rows: dict[DocumentTab, Gtk.ListBoxRow] = {}
 
     # ------------------------------------------------------------------
     # Gtk.Application Lifecycle
@@ -208,6 +209,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._main_paned.set_position(self.config.sidebar_width)
         self._main_paned.connect("notify::position", self._on_sidebar_width_changed)
 
+        initial_sidebar_tab = self.config.sidebar_tab
         self.sidebar = DocumentSidebar(
             on_heading_clicked=self._on_sidebar_heading_clicked,
             on_section_clicked=self._on_sidebar_section_clicked,
@@ -217,7 +219,7 @@ class MarkdownViewerApp(Gtk.Application):
             on_status_message=self.show_status_toast,
         )
         self.sidebar.show_all()
-        self.sidebar.set_active_tab(self.config.sidebar_tab)
+        self.sidebar.set_active_tab(initial_sidebar_tab)
         self.sidebar.set_no_show_all(True)
         self.sidebar.hide()
 
@@ -237,7 +239,10 @@ class MarkdownViewerApp(Gtk.Application):
         self.notebook.set_scrollable(True)
         self.notebook.set_show_border(False)
         self.notebook.set_show_tabs(False)
-        self.notebook.connect("switch-page", self._on_notebook_switch_page)
+        self.notebook.connect_after("switch-page", self._on_notebook_switch_page)
+        self.notebook.connect("page-reordered", lambda *_: self.sidebar.documents.invalidate_sort())
+        self.sidebar.documents.set_sort_func(self._compare_document_rows)
+        self.sidebar.documents.connect("row-activated", self._activate_document)
         self._content_stack.add_named(self.notebook, "tabs")
 
         self._main_paned.pack1(self.sidebar, False, False)
@@ -256,6 +261,22 @@ class MarkdownViewerApp(Gtk.Application):
         hb.set_title("Markveil")
         hb.set_subtitle("")
         self._headerbar = hb
+
+        # The window manager still receives the full title; the bar uses one line.
+        hb.set_has_subtitle(False)
+        self._location = Gtk.Label()
+        self._location.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self._location.set_max_width_chars(24)
+        self._location.get_style_context().add_class("location")
+        hb.set_custom_title(self._location)
+        brand = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=7)
+        mark_path = Path(__file__).resolve().parent.parent / "assets" / "icons" / "folio-mark.svg"
+        symbol = Gtk.Image.new_from_file(str(mark_path))
+        brand.pack_start(symbol, False, False, 0)
+        wordmark = Gtk.Label(label="Markveil")
+        wordmark.get_style_context().add_class("wordmark")
+        brand.pack_start(wordmark, False, False, 0)
+        hb.pack_start(brand)
 
         # --- Start controls ---
         self._sidebar_btn = Gtk.ToggleButton()
@@ -300,7 +321,6 @@ class MarkdownViewerApp(Gtk.Application):
         self._mode_switcher.get_style_context().add_class("mode-switcher")
         self._mode_switcher.show_all()
         self._mode_switcher.set_no_show_all(True)
-        hb.pack_start(self._mode_switcher)
 
         # --- End controls (packed right-to-left) ---
         self._menu_btn = Gtk.MenuButton()
@@ -312,17 +332,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._menu_btn.set_popover(self._menu_popover)
         hb.pack_end(self._menu_btn)
 
-        self._theme_btn = Gtk.Button(label=THEMES[self.resolved_theme].name)
-        self._theme_btn.set_tooltip_text("Cycle Theme (Ctrl+T)")
-        self._theme_btn.connect("clicked", lambda _b: self.cycle_theme())
-        hb.pack_end(self._theme_btn)
-
-        self._agent_btn = Gtk.Button(label="Ask Agent")
-        self._agent_btn.set_tooltip_text("Ask Local Agent (Ctrl+Shift+A)")
-        self._agent_btn.connect("clicked", lambda _b: self.action_ask_agent())
-        self._agent_btn.show_all()
-        self._agent_btn.set_no_show_all(True)
-        hb.pack_end(self._agent_btn)
+        hb.pack_end(self._mode_switcher)
 
         self._watch_btn = Gtk.ToggleButton(label="Watch")
         self._watch_btn.set_tooltip_text("Toggle Agent Watch Mode (Ctrl+Shift+W)")
@@ -336,7 +346,7 @@ class MarkdownViewerApp(Gtk.Application):
         )
         self._search_btn.set_tooltip_text("Find (Ctrl+F)")
         self._search_btn.connect("clicked", lambda _b: self.action_open_search(False))
-        hb.pack_end(self._search_btn)
+        hb.pack_start(self._search_btn)
 
         win.set_titlebar(hb)
 
@@ -368,7 +378,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._menu_save_as = add_item("Save As…   (Ctrl+Shift+S)", self.action_save_as)
 
         add_sep()
-        rec_hdr = Gtk.Label(label="RECENT FILES")
+        rec_hdr = Gtk.Label(label="Recent files")
         rec_hdr.get_style_context().add_class("sidebar-section-title")
         rec_hdr.set_xalign(0.0)
         rec_hdr.set_margin_start(8)
@@ -379,6 +389,8 @@ class MarkdownViewerApp(Gtk.Application):
         box.pack_start(self._menu_recent_box, False, False, 0)
 
         add_sep()
+        self._agent_btn = add_item("Ask local agent…   (Ctrl+Shift+A)", self.action_ask_agent)
+        self._theme_btn = add_item("Cycle theme   (Ctrl+T)", self.cycle_theme)
         add_item("Compare / Visual Diff…   (Ctrl+D)", self.action_open_diff_picker)
         add_item("Export Review Comments…", self.action_export_reviews)
         add_item("Print / Export PDF…   (Ctrl+P)", self.action_print)
@@ -465,7 +477,7 @@ class MarkdownViewerApp(Gtk.Application):
         zoom_box.pack_start(z_in, False, False, 0)
         bar.pack_end(zoom_box, False, False, 0)
 
-        self._readonly_badge = Gtk.Label(label="READ-ONLY")
+        self._readonly_badge = Gtk.Label(label="Read only")
         self._readonly_badge.get_style_context().add_class("readonly-badge")
         bar.pack_end(self._readonly_badge, False, False, 0)
 
@@ -559,31 +571,46 @@ class MarkdownViewerApp(Gtk.Application):
                 tabs.append(page)
         return tabs
 
+    def _compare_document_rows(self, left: Gtk.ListBoxRow, right: Gtk.ListBoxRow) -> int:
+        return self.notebook.page_num(left.document) - self.notebook.page_num(right.document)
+
+    def _activate_document(self, _list: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
+        self.notebook.set_current_page(self.notebook.page_num(row.document))
+
+    def _document_label(self, tab: DocumentTab, *, in_sidebar: bool) -> Gtk.Box:
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        if in_sidebar:
+            icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic", Gtk.IconSize.MENU)
+            box.pack_start(icon, False, False, 0)
+        title = Gtk.Label(xalign=0)
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        title.set_max_width_chars(26)
+        box.pack_start(title, True, True, 0)
+        dot = Gtk.Label(label="•")
+        dot.set_tooltip_text("Unsaved changes")
+        dot.set_no_show_all(True)
+        box.pack_start(dot, False, False, 0)
+        close = Gtk.Button.new_from_icon_name("window-close-symbolic", Gtk.IconSize.MENU)
+        close.get_style_context().add_class("document-close")
+        close.set_relief(Gtk.ReliefStyle.NONE)
+        close.set_tooltip_text("Close document (Ctrl+W)")
+        close.set_focus_on_click(False)
+        close.connect("clicked", lambda _button: self.close_tab(tab))
+        box.pack_end(close, False, False, 0)
+        self._tab_labels.setdefault(tab, []).append((title, dot))
+        box.show_all()
+        return box
+
     def _add_tab(self, tab: DocumentTab) -> DocumentTab:
-        assert self.notebook is not None
-        label_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-
-        dirty_dot = Gtk.Label(label="●")
-        dirty_dot.set_no_show_all(True)
-        label_box.pack_start(dirty_dot, False, False, 0)
-
-        title_lbl = Gtk.Label(label=tab.display_name)
-        label_box.pack_start(title_lbl, False, False, 0)
-
-        close_btn = Gtk.Button(label="×")
-        close_btn.set_relief(Gtk.ReliefStyle.NONE)
-        close_btn.set_focus_on_click(False)
-        close_btn.set_tooltip_text("Close tab (Ctrl+W)")
-        close_btn.connect("clicked", lambda _b, t=tab: self.close_tab(t))
-        label_box.pack_end(close_btn, False, False, 0)
-
-        label_box.show_all()
-        self._tab_label_widgets[tab] = {
-            "dirty_dot": dirty_dot,
-            "title_lbl": title_lbl,
-        }
-
+        assert self.notebook is not None and self.sidebar is not None
+        label_box = self._document_label(tab, in_sidebar=False)
         page_idx = self.notebook.append_page(tab, label_box)
+        row = Gtk.ListBoxRow()
+        row.document = tab
+        row.add(self._document_label(tab, in_sidebar=True))
+        self._document_rows[tab] = row
+        self.sidebar.documents.add(row)
+        row.show_all()
         self.notebook.set_tab_reorderable(tab, True)
         tab.show_all()
         tab.set_view_mode(tab.view_mode)
@@ -597,20 +624,14 @@ class MarkdownViewerApp(Gtk.Application):
 
     def _update_notebook_tab_bar(self) -> None:
         if self.notebook is not None:
-            self.notebook.set_show_tabs(self.notebook.get_n_pages() > 1)
+            use_strip = self.quick_mode or not self.config.sidebar_visible
+            self.notebook.set_show_tabs(use_strip and self.notebook.get_n_pages() > 1)
 
     def _update_tab_label(self, tab: DocumentTab) -> None:
-        widgets = self._tab_label_widgets.get(tab)
-        if not widgets:
-            return
-        dot = widgets["dirty_dot"]
-        lbl = widgets["title_lbl"]
-        if isinstance(lbl, Gtk.Label):
-            lbl.set_text(tab.display_name)
-        if tab.dirty:
-            dot.show()
-        else:
-            dot.hide()
+        for title, dot in self._tab_labels.get(tab, ()):
+            title.set_text(tab.display_name)
+            title.set_tooltip_text(tab.current_file or tab.display_name)
+            dot.set_visible(tab.dirty)
 
     def open_file(
         self,
@@ -718,7 +739,8 @@ class MarkdownViewerApp(Gtk.Application):
         if page_num < 0:
             return False
         tab.cleanup()
-        self._tab_label_widgets.pop(tab, None)
+        self._tab_labels.pop(tab, None)
+        self.sidebar.documents.remove(self._document_rows.pop(tab))
         self.notebook.remove_page(page_num)
         self._update_notebook_tab_bar()
 
@@ -769,7 +791,7 @@ class MarkdownViewerApp(Gtk.Application):
             pass
 
         if hasattr(self, "_theme_btn"):
-            self._theme_btn.set_label(THEMES[self.resolved_theme].name)
+            self._theme_btn.set_label(f"Cycle theme  ·  {THEMES[self.resolved_theme].name}   (Ctrl+T)")
 
     def set_theme(self, theme_id: str) -> None:
         self.config.theme = theme_id
@@ -806,13 +828,15 @@ class MarkdownViewerApp(Gtk.Application):
     def _sync_chrome_visibility(self) -> None:
         tab = self.get_active_tab()
         has_tab = tab is not None
+        self._update_notebook_tab_bar()
+        self._search_btn.set_sensitive(has_tab)
+        self._agent_btn.set_sensitive(has_tab and not self.quick_mode)
 
         if self.quick_mode:
             self._sidebar_btn.hide()
             self._save_btn.hide()
             self._mode_switcher.hide()
             self._watch_btn.hide()
-            self._agent_btn.hide()
             self._statusbar.hide()
             if self.sidebar is not None:
                 self.sidebar.hide()
@@ -825,8 +849,6 @@ class MarkdownViewerApp(Gtk.Application):
         if has_tab:
             self._watch_btn.show_all()
             self._watch_btn.show()
-            self._agent_btn.show_all()
-            self._agent_btn.show()
             if tab.readonly:
                 self._save_btn.hide()
                 self._mode_switcher.hide()
@@ -839,7 +861,6 @@ class MarkdownViewerApp(Gtk.Application):
             self._save_btn.hide()
             self._mode_switcher.hide()
             self._watch_btn.hide()
-            self._agent_btn.hide()
 
         if self.sidebar is not None:
             if has_tab and self.config.sidebar_visible:
@@ -848,7 +869,7 @@ class MarkdownViewerApp(Gtk.Application):
             else:
                 self.sidebar.hide()
 
-        if self.config.status_bar_visible:
+        if has_tab and self.config.status_bar_visible:
             self._statusbar.show_all()
             self._statusbar.show()
         else:
@@ -860,7 +881,7 @@ class MarkdownViewerApp(Gtk.Application):
         try:
             if tab is None:
                 self._headerbar.set_title("Markveil")
-                self._headerbar.set_subtitle("")
+                self._location.set_text("")
                 self._cursor_lbl.set_text("")
                 self._stats_lbl.set_text("")
                 self._watch_badge.hide()
@@ -877,14 +898,18 @@ class MarkdownViewerApp(Gtk.Application):
             dirty_prefix = "• " if tab.dirty else ""
             self._headerbar.set_title(f"{dirty_prefix}{tab.display_name}")
 
+            location = tab.display_name
             if tab.diff_active:
-                self._headerbar.set_subtitle("Visual Diff")
-            elif tab.clipboard_mode:
-                self._headerbar.set_subtitle("Clipboard Studio")
+                location = f"Diff  /  {location}"
             elif tab.current_file:
-                self._headerbar.set_subtitle(str(Path(tab.current_file).parent))
-            else:
-                self._headerbar.set_subtitle("Unsaved document")
+                parent = Path(tab.current_file).parent.name
+                if parent:
+                    location = f"{parent}  /  {location}"
+            self._location.set_text(location)
+            self._location.set_tooltip_text(tab.current_file or tab.display_name)
+            row = self._document_rows.get(tab)
+            if row is not None:
+                self.sidebar.documents.select_row(row)
 
             # Save button emphasis
             save_ctx = self._save_btn.get_style_context()
@@ -898,6 +923,10 @@ class MarkdownViewerApp(Gtk.Application):
                 self._mode_dummy_stack.set_visible_child_name(tab.view_mode)
 
             # Watch button
+            watch_label = "Watch"
+            if tab.watch_enabled:
+                watch_label = "Paused" if tab.watch_paused else "● Watching"
+            self._watch_btn.set_label(watch_label)
             self._watch_btn.set_active(tab.watch_enabled)
             self._watch_btn.set_sensitive(bool(tab.current_file))
 
@@ -918,7 +947,7 @@ class MarkdownViewerApp(Gtk.Application):
                 self._stats_lbl.set_text("")
 
             if tab.watch_enabled:
-                self._watch_badge.set_text(f"● WATCH · Rev {max(1, tab.revision_count)}")
+                self._watch_badge.set_text(f"Revision {max(1, tab.revision_count)}")
                 if tab.watch_paused:
                     self._watch_badge.get_style_context().remove_class("active")
                 else:

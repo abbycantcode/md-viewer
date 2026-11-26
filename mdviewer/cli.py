@@ -12,7 +12,9 @@ try:
 except ImportError:  # pragma: no cover
     __version__ = "2.0.0"
 
-THEME_CHOICES = ("auto", "paper", "obsidian", "sepia", "nordic")
+from mdviewer.themes import THEME_ORDER
+
+THEME_CHOICES = ("auto", *THEME_ORDER)
 
 
 @dataclass

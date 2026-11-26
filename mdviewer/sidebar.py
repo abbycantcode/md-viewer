@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
@@ -44,7 +45,7 @@ class DocumentSidebar(Gtk.Box):
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.get_style_context().add_class("mdv-sidebar")
-        self.set_size_request(240, -1)
+        self.set_size_request(200, -1)
 
         self._on_heading_clicked = on_heading_clicked
         self._on_section_clicked = on_section_clicked
@@ -56,8 +57,23 @@ class DocumentSidebar(Gtk.Box):
         self._current_file: str | None = None
         self._current_comments: list[ReviewComment] = []
         self._outline_rows: dict[str, Gtk.ListBoxRow] = {}
+        self._shown_headings: list[HeadingItem] | None = None
+        self._shown_report: DocumentContextReport | None = None
         self._active_slug: str = ""
         self._suppress_outline_select = False
+
+        section = Gtk.Label(label="Open documents", xalign=0)
+        section.get_style_context().add_class("rail-title")
+        self.pack_start(section, False, False, 0)
+        self.documents = Gtk.ListBox()
+        self.documents.get_style_context().add_class("open-documents")
+        self.documents.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        files = Gtk.ScrolledWindow()
+        files.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        files.set_max_content_height(156)
+        files.set_propagate_natural_height(True)
+        files.add(self.documents)
+        self.pack_start(files, False, False, 0)
 
         # Header with 3-tab StackSwitcher
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -69,7 +85,7 @@ class DocumentSidebar(Gtk.Box):
 
         self.switcher = Gtk.StackSwitcher()
         self.switcher.set_stack(self.stack)
-        self.switcher.set_homogeneous(True)
+        self.switcher.set_homogeneous(False)
         self.switcher.set_hexpand(True)
         header.pack_start(self.switcher, True, True, 0)
         self.pack_start(header, False, False, 0)
@@ -80,6 +96,20 @@ class DocumentSidebar(Gtk.Box):
         self._build_comments_tab()
 
         self.pack_start(self.stack, True, True, 0)
+        self._folder = Gtk.Box(spacing=7)
+        self._folder.get_style_context().add_class("workspace-location")
+        self._folder.pack_start(
+            Gtk.Image.new_from_icon_name("folder-symbolic", Gtk.IconSize.MENU), False, False, 0
+        )
+        self._folder_name = Gtk.Label(xalign=0)
+        self._folder_name.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self._folder.pack_start(self._folder_name, True, True, 0)
+        self._folder.show_all()
+        self._folder.set_no_show_all(True)
+        self.pack_end(self._folder, False, False, 0)
+        for button, name in zip(self.switcher.get_children(), ("Outline", "Context", "Comments")):
+            button.set_tooltip_text(name)
+            button.get_accessible().set_name(name)
 
     # ------------------------------------------------------------------
     # Tab Builders
@@ -103,9 +133,13 @@ class DocumentSidebar(Gtk.Box):
         self._outline_list.set_placeholder(self._outline_empty)
         self._outline_empty.show()
 
+        caption = Gtk.Label(label="In this document", xalign=0)
+        caption.get_style_context().add_class("rail-title")
+        box.pack_start(caption, False, False, 0)
         scrolled.add(self._outline_list)
         box.pack_start(scrolled, True, True, 0)
         self.stack.add_titled(box, "outline", "Outline")
+        self.stack.child_set_property(box, "icon-name", "view-list-symbolic")
 
     def _build_context_tab(self) -> None:
         scrolled = Gtk.ScrolledWindow()
@@ -117,6 +151,7 @@ class DocumentSidebar(Gtk.Box):
         scrolled.add(self._context_box)
 
         self.stack.add_titled(scrolled, "context", "Context")
+        self.stack.child_set_property(scrolled, "icon-name", "dialog-information-symbolic")
 
     def _build_comments_tab(self) -> None:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -152,6 +187,7 @@ class DocumentSidebar(Gtk.Box):
         outer.pack_start(scrolled, True, True, 0)
 
         self.stack.add_titled(outer, "comments", "Comments")
+        self.stack.child_set_property(outer, "icon-name", "mail-message-new-symbolic")
 
     # ------------------------------------------------------------------
     # Tab Selection API
@@ -174,7 +210,15 @@ class DocumentSidebar(Gtk.Box):
     def update_outline(
         self, headings: list[HeadingItem], file_path: str | None = None
     ) -> None:
+        if self._current_file != file_path or self._shown_headings is None:
+            parent = Path(file_path).parent if file_path else None
+            self._folder.set_visible(parent is not None)
+            self._folder_name.set_text((parent.name or str(parent)) if parent else "")
+            self._folder.set_tooltip_text(str(parent) if parent else None)
         self._current_file = file_path
+        if headings == self._shown_headings:
+            return
+        self._shown_headings = headings
         self._outline_rows.clear()
         for child in list(self._outline_list.get_children()):
             self._outline_list.remove(child)
@@ -194,6 +238,7 @@ class DocumentSidebar(Gtk.Box):
             hbox.pack_start(lbl, True, True, 0)
 
             copy_btn = Gtk.Button(label="#")
+            copy_btn.get_style_context().add_class("anchor-copy")
             copy_btn.set_relief(Gtk.ReliefStyle.NONE)
             copy_btn.set_tooltip_text("Copy heading anchor link")
             copy_btn.set_focus_on_click(False)
@@ -238,6 +283,9 @@ class DocumentSidebar(Gtk.Box):
     # Context Inspector Updates
     # ------------------------------------------------------------------
     def update_context(self, report: DocumentContextReport | None) -> None:
+        if report is not None and report is self._shown_report:
+            return
+        self._shown_report = report
         for child in list(self._context_box.get_children()):
             self._context_box.remove(child)
 
@@ -254,7 +302,7 @@ class DocumentSidebar(Gtk.Box):
         metrics_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         metrics_card.get_style_context().add_class("context-metric-card")
 
-        title = Gtk.Label(label="DOCUMENT METRICS")
+        title = Gtk.Label(label="Document metrics")
         title.get_style_context().add_class("sidebar-section-title")
         title.set_xalign(0.0)
         metrics_card.pack_start(title, False, False, 0)
@@ -286,7 +334,7 @@ class DocumentSidebar(Gtk.Box):
         token_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         token_card.get_style_context().add_class("context-metric-card")
 
-        tok_title = Gtk.Label(label="TOKEN ESTIMATE (HEURISTIC)")
+        tok_title = Gtk.Label(label="Estimated tokens")
         tok_title.get_style_context().add_class("sidebar-section-title")
         tok_title.set_xalign(0.0)
         token_card.pack_start(tok_title, False, False, 0)
@@ -329,7 +377,7 @@ class DocumentSidebar(Gtk.Box):
         if report.warnings:
             warn_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             warn_card.get_style_context().add_class("context-metric-card")
-            w_hdr = Gtk.Label(label=f"CHECKS & WARNINGS ({len(report.warnings)})")
+            w_hdr = Gtk.Label(label=f"Checks and warnings ({len(report.warnings)})")
             w_hdr.get_style_context().add_class("sidebar-section-title")
             w_hdr.set_xalign(0.0)
             warn_card.pack_start(w_hdr, False, False, 0)
@@ -345,7 +393,7 @@ class DocumentSidebar(Gtk.Box):
 
         # Per-section breakdown
         if report.sections:
-            sec_hdr = Gtk.Label(label="SECTIONS BY EST. TOKENS")
+            sec_hdr = Gtk.Label(label="Tokens by section")
             sec_hdr.get_style_context().add_class("sidebar-section-title")
             sec_hdr.set_xalign(0.0)
             sec_hdr.set_margin_start(8)
@@ -401,7 +449,10 @@ class DocumentSidebar(Gtk.Box):
         self, comments: list[ReviewComment], source_path: str | None = None
     ) -> None:
         self._current_file = source_path
-        self._current_comments = list(comments)
+        if self._comments_box.get_children() and comments == self._current_comments:
+            return
+        # The review session edits its comment objects in place.
+        self._current_comments = [replace(comment) for comment in comments]
 
         count = len(comments)
         self._comments_count_label.set_text(

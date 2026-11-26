@@ -7,7 +7,7 @@ WCAG AA (>= 4.5:1) contrast across all four themes, and reduced-motion support.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import quote
 
 
@@ -100,7 +100,7 @@ class ThemeSpec:
     scrollbar_thumb_hover: str
 
 
-THEME_ORDER: tuple[str, ...] = ("paper", "obsidian", "sepia", "nordic")
+THEME_ORDER: tuple[str, ...] = ("folio", "paper", "obsidian", "sepia", "nordic")
 
 THEMES: dict[str, ThemeSpec] = {
     "paper": ThemeSpec(
@@ -373,8 +373,23 @@ THEMES: dict[str, ThemeSpec] = {
     ),
 }
 
+# Keep the existing light palette's semantic warning and diff colors.
+THEMES["folio"] = replace(
+    THEMES["paper"], id="folio", name="Folio",
+    bg="#FAFAF2", surface="#EDF0E3", surface_alt="#E2E9CE",
+    text="#304736", heading="#23392D", muted="#526454",
+    border="#CDD3C1", border_subtle="#E1E5D7", border_strong="#91A185",
+    accent="#395B40", accent_hover="#203F2B", accent_soft="#DFE8D6",
+    accent_border="#869A78", selection_bg="#D6DEC8", selection_text="#23392D",
+    code_inline_bg="#E9EDDF", code_bg="#EFF2E8", code_header_bg="#E6EBDB",
+    blockquote_bg="#EFF2E7", kbd_bg="#EDF0E3", kbd_border="#CCD3C1",
+    watch_bg_peak="#DCE7C8", watch_bg_rest="#F0F3E6",
+    note_fg="#355142", note_bg="#EAF0E3",
+    diff_hunk_bg="#E2E9D8", diff_hunk_fg="#35563F", json_key="#395B40",
+)
+
 _FONT_SANS = (
-    '"Inter", "IBM Plex Sans", "Ubuntu", "Cantarell", -apple-system, '
+    '"IBM Plex Sans", "Inter", "Ubuntu", "Cantarell", -apple-system, '
     'BlinkMacSystemFont, "Segoe UI", "Noto Sans", sans-serif'
 )
 _FONT_MONO = (
@@ -384,17 +399,17 @@ _FONT_MONO = (
 
 
 def resolve_theme_id(theme_id: str | None, system_dark: bool = False) -> str:
-    """Resolve user/config theme identifier to one of the four curated theme IDs."""
+    """Resolve user/config theme identifier to one of a curated theme ID."""
     key = (theme_id or "auto").strip().lower()
     if key in ("auto", "system", ""):
-        return "obsidian" if system_dark else "paper"
+        return "obsidian" if system_dark else "folio"
     if key == "dark":
         return "obsidian"
     if key == "light":
         return "paper"
     if key in THEMES:
         return key
-    return "obsidian" if system_dark else "paper"
+    return "obsidian" if system_dark else "folio"
 
 
 def is_dark_theme(theme_id: str) -> bool:
@@ -562,6 +577,7 @@ def get_document_css(theme_id: str, custom_css: str = "") -> str:
     --shadow-md: {t.shadow_md};
     --scrollbar-thumb: {t.scrollbar_thumb};
     --scrollbar-thumb-hover: {t.scrollbar_thumb_hover};
+    --font-serif: "Bitstream Charter", Charter, Georgia, "Noto Serif", serif;
     --font-sans: {_FONT_SANS};
     --font-mono: {_FONT_MONO};
 }}
@@ -577,7 +593,7 @@ html {{
 
 body {{
     font-family: var(--font-sans);
-    font-size: 15.5px;
+    font-size: 16px;
     line-height: 1.72;
     color: var(--text-color);
     background-color: var(--bg-color);
@@ -597,9 +613,9 @@ body {{
 
 /* Editorial prose container — 72ch measure with generous breathing room */
 .markdown-container {{
-    max-width: 72ch;
+    max-width: 54rem;
     margin: 0 auto;
-    padding: 2.75rem 2.25rem 5.5rem 2.25rem;
+    padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1.25rem, 5vw, 4rem) 5.5rem;
 }}
 
 .markdown-container:has(.diff-container),
@@ -627,22 +643,28 @@ h1, h2, h3, h4, h5, h6 {{
     scroll-margin-top: 1.5rem;
 }}
 
+h1, h2 {{
+    font-family: var(--font-serif);
+    font-weight: normal;
+    line-height: 1.12;
+    letter-spacing: -0.04em;
+}}
+
 h1 {{
-    font-size: 2rem;
-    font-weight: 720;
-    letter-spacing: -0.028em;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border-color);
-    margin-top: 0.25rem;
-    margin-bottom: 1.15rem;
+    font-size: clamp(2.25rem, 5.2vw, 4rem);
+    margin: 0.25rem 0 1rem;
 }}
 
 h2 {{
-    font-size: 1.48rem;
-    font-weight: 680;
-    padding-bottom: 0.35rem;
+    font-size: clamp(1.55rem, 3.2vw, 2.05rem);
+    margin-top: 2rem;
+}}
+
+.markdown-container > h1:first-of-type + p {{
+    font: 1.24rem/1.5 var(--font-serif);
+    color: var(--muted-color);
+    padding-bottom: 1.25rem;
     border-bottom: 1px solid var(--border-color);
-    margin-top: 2.25rem;
 }}
 
 h3 {{
@@ -774,7 +796,7 @@ code {{
     font-size: 0.87em;
     background-color: var(--inline-code-bg);
     color: var(--text-color);
-    border: 1px solid var(--border-color);
+    border: none;
     padding: 0.14em 0.4em;
     border-radius: 4px;
 }}
@@ -782,8 +804,8 @@ code {{
 .markdown-container pre {{
     margin: 1.35rem 0;
     padding: 1rem 1.2rem;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    border: none;
     background-color: var(--pre-bg);
     color: var(--text-color);
     font-family: var(--font-mono);
@@ -805,8 +827,8 @@ code {{
 /* Pygments highlight wrapper — beats Pygments default background */
 .markdown-container .highlight {{
     margin: 1.4rem 0;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    border: none;
     background-color: var(--pre-bg);
     color: var(--text-color);
     overflow: hidden;
@@ -845,7 +867,7 @@ code {{
     align-items: center;
     gap: 0.35rem;
     padding: 0.18rem 0.52rem;
-    border: 1px solid var(--border-color);
+    border: none;
     border-radius: 4px;
     background-color: var(--bg-color);
     color: var(--muted-color);
@@ -1093,44 +1115,34 @@ img.blocked-remote-img,
 
 /* Front-matter metadata card */
 details.front-matter-card {{
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border: none;
+    border-radius: 3px;
     background-color: var(--bg-color);
-    margin: 0 0 1.9rem 0;
+    margin: 0 0 1.25rem;
     overflow: hidden;
 }}
 
 summary.front-matter-summary {{
-    padding: 0.62rem 1rem;
     cursor: pointer;
-    font-weight: 600;
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.65rem;
     user-select: none;
-    background-color: var(--surface-bg);
-    color: var(--heading-color);
-    border-bottom: 1px solid transparent;
+    font-size: 0.85rem;
+    color: var(--muted-color);
 }}
 
-details.front-matter-card[open] summary.front-matter-summary {{
-    border-bottom-color: var(--border-color);
+.front-matter-summary::after {{
+    content: "▸";
+    font-size: 0.8em;
 }}
+
+details[open] > .front-matter-summary::after {{ content: "▾"; }}
 
 .front-matter-badge {{
-    font-family: var(--font-mono);
-    font-size: 0.71rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 0.16rem 0.52rem;
-    background-color: var(--accent-soft);
-    color: var(--accent-color);
-    border: 1px solid var(--accent-border);
-    border-radius: 4px;
-    font-weight: 650;
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.4rem;
 }}
 
 .front-matter-doc-title {{
@@ -1278,9 +1290,9 @@ details.front-matter-card[open] summary.front-matter-summary {{
 .mermaid-container {{
     position: relative;
     margin: 1.5rem 0;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    background-color: var(--bg-color);
+    border-radius: 3px;
+    border: none;
+    background-color: var(--surface-alt);
     overflow: hidden;
 }}
 
@@ -1290,14 +1302,14 @@ details.front-matter-card[open] summary.front-matter-summary {{
     justify-content: space-between;
     gap: 0.75rem;
     padding: 0.42rem 0.9rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.05em;
-    text-transform: uppercase;
+
     color: var(--muted-color);
-    border-bottom: 1px solid var(--border-color);
-    background-color: var(--surface-bg);
+    border-bottom: 0;
+    background-color: transparent;
 }}
 
 .mermaid-badge {{
@@ -1317,7 +1329,7 @@ details.front-matter-card[open] summary.front-matter-summary {{
     align-items: center;
     gap: 0.25rem;
     margin-left: auto;
-    opacity: 0.55;
+    opacity: 0.85;
     transition: opacity 0.15s ease;
 }}
 
