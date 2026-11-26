@@ -56,7 +56,7 @@ class WelcomeView(Gtk.ScrolledWindow):
         outer.set_margin_bottom(40)
         outer.set_margin_start(32)
         outer.set_margin_end(32)
-        outer.set_size_request(540, -1)
+        outer.set_size_request(380, -1)
 
         # Header with Markveil logo
         header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
@@ -75,12 +75,13 @@ class WelcomeView(Gtk.ScrolledWindow):
 
         title_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         title = Gtk.Label()
-        title.set_markup('<span size="xx-large" weight="bold">Markveil</span>')
+        title.set_text("Open a document")
+        title.get_style_context().add_class("welcome-title")
         title.set_xalign(0.0)
         title_col.pack_start(title, False, False, 0)
 
         subtitle = Gtk.Label(
-            label="Native GTK3 Markdown Studio · Offline KaTeX & Mermaid · Agent Watch Mode"
+            label="Choose a file, start a draft, or open your clipboard."
         )
         subtitle.get_style_context().add_class("muted-label")
         subtitle.set_xalign(0.0)
@@ -113,7 +114,7 @@ class WelcomeView(Gtk.ScrolledWindow):
         outer.pack_start(actions, False, False, 0)
 
         # Recent files
-        recent_title = Gtk.Label(label="RECENT FILES")
+        recent_title = Gtk.Label(label="Recent files")
         recent_title.get_style_context().add_class("sidebar-section-title")
         recent_title.set_xalign(0.0)
         recent_title.set_margin_bottom(6)
@@ -125,47 +126,6 @@ class WelcomeView(Gtk.ScrolledWindow):
         self._recent_list.connect("row-activated", self._handle_recent_activated)
         self._recent_list.get_style_context().add_class("context-metric-card")
         outer.pack_start(self._recent_list, False, False, 0)
-
-        # Shortcut highlights
-        sc_title = Gtk.Label(label="KEYBOARD HIGHLIGHTS")
-        sc_title.get_style_context().add_class("sidebar-section-title")
-        sc_title.set_xalign(0.0)
-        sc_title.set_margin_top(22)
-        sc_title.set_margin_bottom(8)
-        outer.pack_start(sc_title, False, False, 0)
-
-        sc_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        sc_card.get_style_context().add_class("context-metric-card")
-        grid = Gtk.Grid(column_spacing=24, row_spacing=6)
-
-        highlights = [
-            ("Ctrl+O", "Open file", "Ctrl+Shift+W", "Toggle Agent Watch Mode"),
-            ("Ctrl+E", "Cycle Preview / Split / Edit", "Ctrl+D", "Visual Diff View"),
-            ("Ctrl+B / F9", "Toggle Sidebar", "Ctrl+Shift+A", "Ask Local Agent"),
-            ("Ctrl+T", "Cycle Theme", "Ctrl+? / F1", "All Keyboard Shortcuts"),
-        ]
-        for row_idx, (k1, d1, k2, d2) in enumerate(highlights):
-            l_k1 = Gtk.Label()
-            l_k1.set_markup(f"<tt><b>{GLib.markup_escape_text(k1)}</b></tt>")
-            l_k1.set_xalign(0.0)
-            l_d1 = Gtk.Label(label=d1)
-            l_d1.get_style_context().add_class("muted-label")
-            l_d1.set_xalign(0.0)
-
-            l_k2 = Gtk.Label()
-            l_k2.set_markup(f"<tt><b>{GLib.markup_escape_text(k2)}</b></tt>")
-            l_k2.set_xalign(0.0)
-            l_d2 = Gtk.Label(label=d2)
-            l_d2.get_style_context().add_class("muted-label")
-            l_d2.set_xalign(0.0)
-
-            grid.attach(l_k1, 0, row_idx, 1, 1)
-            grid.attach(l_d1, 1, row_idx, 1, 1)
-            grid.attach(l_k2, 2, row_idx, 1, 1)
-            grid.attach(l_d2, 3, row_idx, 1, 1)
-
-        sc_card.pack_start(grid, False, False, 0)
-        outer.pack_start(sc_card, False, False, 0)
 
         self.add(outer)
         self.set_recent_files(recent_files or [])
@@ -782,7 +742,7 @@ class ShortcutsDialog(Gtk.Dialog):
                 ("Ctrl+Shift+W", "Toggle Agent Watch Mode"),
                 ("Ctrl+D", "Open Visual Diff picker"),
                 ("Ctrl+Shift+A", "Ask Local Agent (claude / codex / agy)"),
-                ("Ctrl+T", "Cycle Theme (Paper / Obsidian / Sepia / Nordic)"),
+                ("Ctrl+T", "Cycle Theme (Folio / Paper / Obsidian / Sepia / Nordic)"),
                 ("Super+Shift+M", "Global Clipboard Studio launcher"),
                 ("Ctrl+? / F1", "Show keyboard shortcuts"),
             ],

@@ -9,7 +9,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-VALID_THEMES = ("auto", "paper", "obsidian", "sepia", "nordic")
+from mdviewer.themes import THEME_ORDER
+
+VALID_THEMES = ("auto", *THEME_ORDER)
 MAX_RECENT_FILES = 15
 
 
@@ -17,13 +19,13 @@ MAX_RECENT_FILES = 15
 class AppConfig:
     """Persistent application preferences and window state."""
 
-    theme: str = "auto"
+    theme: str = "folio"
     zoom_level: float = 1.0
     window_width: int = 1080
     window_height: int = 780
-    sidebar_visible: bool = False
+    sidebar_visible: bool = True
     sidebar_tab: str = "outline"
-    sidebar_width: int = 270
+    sidebar_width: int = 252
     split_ratio: float = 0.5
     vim_navigation: bool = True
     allow_remote_images: bool = False
@@ -91,7 +93,7 @@ def _config_from_dict(raw: dict[str, Any]) -> AppConfig:
     defaults = AppConfig()
     theme = raw.get("theme", defaults.theme)
     if theme not in VALID_THEMES:
-        theme = defaults.theme
+        theme = "auto"
 
     sidebar_tab = raw.get("sidebar_tab", defaults.sidebar_tab)
     if not isinstance(sidebar_tab, str) or not sidebar_tab.strip():

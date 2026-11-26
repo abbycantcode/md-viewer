@@ -400,7 +400,7 @@ def render_front_matter_html(meta: dict | None) -> str:
     )
 
     return (
-        '<details class="front-matter-card" open>\n'
+        '<details class="front-matter-card">\n'
         '  <summary class="front-matter-summary">\n'
         '    <span class="front-matter-badge">\n'
         '      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" '

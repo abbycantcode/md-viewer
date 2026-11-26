@@ -1,46 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
-  <defs>
-    <linearGradient id="tileBg" x1="24" y1="16" x2="232" y2="240" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#151921"/>
-      <stop offset="100%" stop-color="#0E1116"/>
-    </linearGradient>
-    <linearGradient id="sheetLeft" x1="56" y1="56" x2="128" y2="200" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#FCFCFA"/>
-      <stop offset="100%" stop-color="#E4E3DD"/>
-    </linearGradient>
-    <linearGradient id="sheetRight" x1="128" y1="56" x2="200" y2="200" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#EFECE4"/>
-      <stop offset="100%" stop-color="#D4D2C8"/>
-    </linearGradient>
-    <linearGradient id="veilAccent" x1="82" y1="64" x2="174" y2="196" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#79C0FF"/>
-      <stop offset="55%" stop-color="#58A6FF"/>
-      <stop offset="100%" stop-color="#0F52BA"/>
-    </linearGradient>
-    <linearGradient id="veilSheen" x1="128" y1="54" x2="196" y2="160" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#58A6FF" stop-opacity="0.28"/>
-      <stop offset="100%" stop-color="#0F52BA" stop-opacity="0.06"/>
-    </linearGradient>
-  </defs>
-
-  <!-- Editorial obsidian tile -->
-  <rect x="14" y="14" width="228" height="228" rx="52" fill="url(#tileBg)" stroke="#2A313D" stroke-width="3"/>
-
-  <!-- Subtle inner hairline frame -->
-  <rect x="24" y="24" width="208" height="208" rx="42" stroke="#1E242E" stroke-width="1.5"/>
-
-  <!-- Back translucent veil sheet (echoes folded document plane) -->
-  <path d="M128 54 L198 72 L198 176 L128 194 Z" fill="url(#veilSheen)" stroke="#3B6EA8" stroke-opacity="0.45" stroke-width="2" stroke-linejoin="round"/>
-
-  <!-- Left architectural M-pillar & inner V-slope (Alabaster paper) -->
-  <path d="M56 184 L56 70 C56 64.5 60.5 60 66 60 L78 60 L128 134 L128 172 L86 110 L86 184 Z" fill="url(#sheetLeft)"/>
-
-  <!-- Right architectural M-pillar & inner V-slope (Warm shaded paper) -->
-  <path d="M200 184 L200 70 C200 64.5 195.5 60 190 60 L178 60 L128 134 L128 172 L170 110 L170 184 Z" fill="url(#sheetRight)"/>
-
-  <!-- Precision cobalt ink V-ridge & proofmark crease -->
-  <path d="M78 60 L128 134 L178 60 L189 60 L128 152 L67 60 Z" fill="url(#veilAccent)"/>
-
-  <!-- Subtle apex proofmark diamond at the V vertex -->
-  <path d="M128 180 L137 192 L128 204 L119 192 Z" fill="#58A6FF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="12" y="12" width="232" height="232" rx="46" fill="#253f32"/>
+  <g transform="translate(36 36) scale(7.67)">
+    <path fill="#e2e9ce" d="M2 21V3l10 9L22 3v18h-4V11l-6 6-6-6v10z"/>
+    <path fill="none" stroke="#c5db94" stroke-width="1.5" d="m9 18 3 3 3-3"/>
+  </g>
 </svg>

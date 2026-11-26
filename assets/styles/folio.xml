@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="markveil-folio" name="Folio" version="1.0" parent-scheme="classic">
+  <style name="text" foreground="#304736" background="#F4F5EC"/>
+  <style name="selection" foreground="#23392D" background="#D6DEC8"/>
+  <style name="cursor" foreground="#23392D"/>
+  <style name="current-line" background="#E9EDDD"/>
+  <style name="line-numbers" foreground="#62745D" background="#EDF0E3"/>
+  <style name="search-match" foreground="#23392D" background="#EFD793"/>
+  <style name="def:comment" foreground="#62745D" italic="true"/>
+  <style name="def:heading" foreground="#294F36" bold="true"/>
+  <style name="def:keyword" foreground="#4F3868" bold="true"/>
+  <style name="def:string" foreground="#526524"/>
+  <style name="def:constant" foreground="#824920"/>
+  <style name="def:link-text" foreground="#315C4D" underline="single"/>
+  <style name="def:identifier" foreground="#35615F"/>
+</style-scheme>

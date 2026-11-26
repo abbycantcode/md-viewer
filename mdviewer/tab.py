@@ -685,6 +685,10 @@ class DocumentTab(Gtk.Box):
         self.webview.set_background_color(rgba)
 
         sm = GtkSource.StyleSchemeManager.get_default()
+        if theme_id == "folio":
+            directory = str(Path(__file__).resolve().parent.parent / "assets" / "styles")
+            if directory not in sm.get_search_path():
+                sm.append_search_path(directory)
         for sid in get_gtksource_scheme_candidates(theme_id):
             scheme = sm.get_scheme(sid)
             if scheme is not None:

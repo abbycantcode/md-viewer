@@ -163,8 +163,8 @@ def test_gui_studio_full_lifecycle(
         assert '<script>alert("xss-in-code-fence")</script>' not in rendered_html
         assert "xss-in-code-fence" in rendered_html
 
-        # Theme switching across all 4 curated themes
-        for theme_id in ("paper", "obsidian", "sepia", "nordic"):
+        # Theme switching across all curated themes
+        for theme_id in ("folio", "paper", "obsidian", "sepia", "nordic"):
             a.set_theme(theme_id)
             _pump_events(0.06)
             assert a.resolved_theme == theme_id
@@ -268,6 +268,49 @@ def test_gui_multi_tab_and_readonly_quick_mode(
         assert a.notebook.get_show_tabs() is False
 
     _run_app_scenario(app, _verify)
+
+
+def test_folio_document_navigation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    from mdviewer.app import MarkdownViewerApp
+    from mdviewer.cli import LaunchOptions
+
+    source = tmp_path / "notes.md"
+    source.write_text("# Field notes", encoding="utf-8")
+    app = MarkdownViewerApp(LaunchOptions(files=[str(source)]))
+
+    def verify(a: MarkdownViewerApp) -> None:
+        first = a.get_active_tab()
+        assert a.resolved_theme == "folio"
+        assert first.source_buffer.get_style_scheme().get_id() == "markveil-folio"
+        draft = a.open_text_tab(text="# Draft", display_name="notes.md", mode="edit")
+        rail = a.sidebar.documents
+        assert rail.get_selected_row().document is draft
+        assert not a.notebook.get_show_tabs()
+        draft.source_buffer.insert_at_cursor(" changed")
+        assert draft.dirty
+        assert all(dot.get_visible() for _, dot in a._tab_labels[draft])
+
+        rail.emit("row-activated", rail.get_row_at_index(0))
+        assert a.get_active_tab() is first
+        assert rail.get_selected_row().document is first
+        assert a.sidebar._folder.get_visible()
+        a.action_toggle_sidebar()
+        assert a.notebook.get_show_tabs()
+        a.notebook.reorder_child(draft, 0)
+        a.action_toggle_sidebar()
+        assert rail.get_row_at_index(0).document is draft
+        assert rail.get_selected_row().document is first
+
+        a.close_tab(first, force=True)
+        assert rail.get_selected_row().document is draft
+        assert not a.sidebar._folder.get_visible()
+        a.close_tab(draft, force=True)
+        assert a._content_stack.get_visible_child_name() == "welcome"
+        assert not a.sidebar.get_visible()
+        assert not a._statusbar.get_visible()
+
+    _run_app_scenario(app, verify)
 
 
 def test_cold_gi_imports_require_gdk3() -> None:
