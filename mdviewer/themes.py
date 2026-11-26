@@ -602,7 +602,8 @@ body {{
     padding: 2.75rem 2.25rem 5.5rem 2.25rem;
 }}
 
-.markdown-container:has(.diff-container) {{
+.markdown-container:has(.diff-container),
+.markdown-container:has(.diff-view) {{
     max-width: min(76rem, 100%);
 }}
 
@@ -1463,13 +1464,26 @@ details.front-matter-card[open] summary.front-matter-summary {{
 [data-changed="true"] {{
     position: relative;
     border-left: 3px solid var(--accent-color);
-    padding-left: 0.85rem;
+    padding: 0.22rem 0.65rem 0.22rem 0.85rem;
+    margin-left: -0.95rem;
     border-radius: 0 4px 4px 0;
     background-color: var(--watch-bg-rest);
     animation: mdvWatchFade 2.4s ease-out forwards;
 }}
 
-/* Diff View */
+.mermaid-container[data-changed="true"],
+.katex-block[data-changed="true"],
+details.front-matter-card[data-changed="true"],
+.plain-text-line[data-changed="true"] {{
+    margin-left: 0;
+}}
+
+.mermaid-container[data-changed="true"],
+details.front-matter-card[data-changed="true"] {{
+    padding: 0;
+}}
+
+/* Diff View (diff_engine.py unified & split tables) */
 .diff-container {{
     margin: 0.5rem 0 2rem 0;
     border: 1px solid var(--border-color);
@@ -1490,6 +1504,20 @@ details.front-matter-card[open] summary.front-matter-summary {{
     font-family: var(--font-mono);
     font-size: 0.82rem;
     color: var(--heading-color);
+}}
+
+.diff-labels {{
+    font-weight: 600;
+    color: var(--heading-color);
+    overflow-wrap: anywhere;
+}}
+
+.diff-empty {{
+    margin: 0;
+    padding: 2rem 1.25rem;
+    text-align: center;
+    color: var(--muted-color);
+    font-size: 0.92rem;
 }}
 
 .diff-stats {{
@@ -1534,6 +1562,7 @@ details.front-matter-card[open] summary.front-matter-summary {{
     background-color: transparent;
 }}
 
+.diff-table .diff-ln,
 .diff-table .diff-lineno,
 .diff-table .diff-gutter {{
     width: 3.4rem;
@@ -1545,6 +1574,19 @@ details.front-matter-card[open] summary.front-matter-summary {{
     padding-right: 0.55rem;
 }}
 
+.diff-table .diff-sign {{
+    width: 1.7rem;
+    text-align: center;
+    color: var(--muted-color);
+    user-select: none;
+    padding-left: 0.2rem;
+    padding-right: 0.2rem;
+}}
+
+.diff-table:not(.diff-split) .diff-code {{
+    width: auto;
+}}
+
 .diff-split {{
     width: 100%;
 }}
@@ -1553,6 +1595,7 @@ details.front-matter-card[open] summary.front-matter-summary {{
     width: calc(50% - 3.4rem);
 }}
 
+.diff-split td:nth-child(3),
 .diff-split td.diff-split-divider {{
     border-left: 1px solid var(--border-color);
 }}
@@ -1563,9 +1606,12 @@ details.front-matter-card[open] summary.front-matter-summary {{
     font-family: var(--font-mono);
     font-size: 0.78rem;
     font-weight: 600;
-    padding: 0.35rem 0.8rem;
     border-top: 1px solid var(--border-color);
     border-bottom: 1px solid var(--border-color);
+}}
+
+.diff-hunk-heading td {{
+    padding: 0.35rem 0.8rem;
 }}
 
 .diff-line-add {{
@@ -1573,10 +1619,16 @@ details.front-matter-card[open] summary.front-matter-summary {{
     color: var(--text-color);
 }}
 
+.diff-line-add .diff-ln,
 .diff-line-add .diff-lineno,
 .diff-line-add .diff-gutter {{
     background-color: var(--diff-add-gutter);
     color: var(--diff-add-fg);
+}}
+
+.diff-line-add .diff-sign {{
+    color: var(--diff-add-fg);
+    font-weight: 600;
 }}
 
 .diff-line-del {{
@@ -1584,15 +1636,49 @@ details.front-matter-card[open] summary.front-matter-summary {{
     color: var(--text-color);
 }}
 
+.diff-line-del .diff-ln,
 .diff-line-del .diff-lineno,
 .diff-line-del .diff-gutter {{
     background-color: var(--diff-del-gutter);
     color: var(--diff-del-fg);
 }}
 
+.diff-line-del .diff-sign {{
+    color: var(--diff-del-fg);
+    font-weight: 600;
+}}
+
 .diff-line-ctx {{
     background-color: var(--bg-color);
     color: var(--text-color);
+}}
+
+/* Split-diff paired replace rows: left side red, right side green */
+.diff-split tr.diff-line-del.diff-line-add > td:nth-child(1) {{
+    background-color: var(--diff-del-gutter);
+    color: var(--diff-del-fg);
+}}
+
+.diff-split tr.diff-line-del.diff-line-add > td:nth-child(2) {{
+    background-color: var(--diff-del-bg);
+}}
+
+.diff-split tr.diff-line-del.diff-line-add > td:nth-child(3) {{
+    background-color: var(--diff-add-gutter);
+    color: var(--diff-add-fg);
+}}
+
+.diff-split tr.diff-line-del.diff-line-add > td:nth-child(4) {{
+    background-color: var(--diff-add-bg);
+}}
+
+/* Split-diff empty half-rows use neutral surface tint */
+.diff-split tr.diff-line-del:not(.diff-line-add) > td:nth-child(3),
+.diff-split tr.diff-line-del:not(.diff-line-add) > td:nth-child(4),
+.diff-split tr.diff-line-add:not(.diff-line-del) > td:nth-child(1),
+.diff-split tr.diff-line-add:not(.diff-line-del) > td:nth-child(2) {{
+    background-color: var(--surface-bg);
+    color: var(--muted-color);
 }}
 
 ins.diff-word,
@@ -1613,6 +1699,62 @@ del.diff-word,
     padding: 0 1px;
 }}
 
+/* Standalone .diff / .patch file viewer */
+.diff-view {{
+    margin: 0.5rem 0 2rem 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-color);
+    font-family: var(--font-mono);
+    font-size: 0.83rem;
+    line-height: 1.5;
+    overflow-x: auto;
+}}
+
+.diff-view > .diff-stats {{
+    display: flex;
+    padding: 0.55rem 0.9rem;
+    background-color: var(--surface-bg);
+    border-bottom: 1px solid var(--border-color);
+}}
+
+.diff-line {{
+    padding: 0.08rem 0.9rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}}
+
+.diff-file-header {{
+    background-color: var(--surface-alt);
+    color: var(--heading-color);
+    font-weight: 600;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+    border-top: 1px solid var(--border-subtle);
+}}
+
+.diff-hunk-header {{
+    background-color: var(--diff-hunk-bg);
+    color: var(--diff-hunk-fg);
+    font-weight: 600;
+    padding-top: 0.24rem;
+    padding-bottom: 0.24rem;
+}}
+
+.diff-add {{
+    background-color: var(--diff-add-bg);
+    color: var(--diff-add-fg);
+}}
+
+.diff-del {{
+    background-color: var(--diff-del-bg);
+    color: var(--diff-del-fg);
+}}
+
+.diff-ctx {{
+    color: var(--text-color);
+}}
+
 /* Technical File Viewer (JSON / YAML / TOML / Diff / Plain Text) */
 .tech-header {{
     display: flex;
@@ -1630,52 +1772,69 @@ del.diff-word,
     color: var(--heading-color);
 }}
 
+.file-status-badge,
 .validation-badge {{
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    padding: 0.18rem 0.6rem;
+    padding: 0.22rem 0.65rem;
+    margin-bottom: 0.9rem;
     border-radius: 4px;
     border: 1px solid var(--border-color);
     font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 0.76rem;
     font-weight: 600;
     letter-spacing: 0.02em;
 }}
 
-.validation-badge.valid {{
+.tech-header .validation-badge {{
+    margin-bottom: 0;
+}}
+
+.validation-badge.valid,
+.file-status-badge.status-valid {{
     color: var(--valid-fg);
     background-color: var(--valid-bg);
     border-color: var(--valid-border);
 }}
 
-.validation-badge.invalid {{
+.validation-badge.invalid,
+.file-status-badge.status-invalid {{
     color: var(--invalid-fg);
     background-color: var(--invalid-bg);
     border-color: var(--invalid-border);
 }}
 
+.structured-tree,
 .json-tree {{
-    margin: 0 0 1.4rem 0;
-    padding: 0.9rem 1.1rem;
+    margin: 0 0 1.35rem 0;
+    padding: 0.85rem 1.05rem;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     background-color: var(--surface-bg);
     font-family: var(--font-mono);
-    font-size: 0.84rem;
+    font-size: 0.83rem;
     line-height: 1.55;
     overflow-x: auto;
 }}
 
-.json-tree details {{
-    padding-left: 1.05rem;
-    border-left: 1px solid var(--border-color);
-    margin: 0.18rem 0;
+.json-tree-root {{
+    margin-top: 0.55rem;
 }}
 
-.json-tree > details {{
-    padding-left: 0;
-    border-left: none;
+.json-tree details.json-node,
+.json-tree details {{
+    margin: 0.14rem 0;
+}}
+
+.json-tree .json-children {{
+    padding-left: 1.05rem;
+    margin-left: 0.32rem;
+    border-left: 1px solid var(--border-color);
+}}
+
+.json-tree .json-leaf {{
+    padding: 0.06rem 0;
 }}
 
 .json-tree summary {{
@@ -1685,11 +1844,38 @@ del.diff-word,
     user-select: none;
 }}
 
+.json-tree .json-meta {{
+    color: var(--muted-color);
+    font-weight: 450;
+}}
+
 .json-tree .json-key {{ color: var(--json-key); }}
-.json-tree .json-string {{ color: var(--json-string); }}
-.json-tree .json-number {{ color: var(--json-number); }}
+.json-tree .json-string,
+.json-tree .json-str {{ color: var(--json-string); }}
+.json-tree .json-number,
+.json-tree .json-num {{ color: var(--json-number); }}
 .json-tree .json-bool {{ color: var(--json-bool); }}
 .json-tree .json-null {{ color: var(--json-null); font-style: italic; }}
+
+/* Plain Text File Viewer */
+.plain-text-view {{
+    margin: 0.25rem 0 2rem 0;
+    padding: 1.1rem 1.3rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--surface-bg);
+    color: var(--text-color);
+    font-family: var(--font-mono);
+    font-size: 0.87rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}}
+
+.plain-text-line {{
+    min-height: 1.5em;
+    white-space: pre-wrap;
+}}
 
 /* Selection Review Comment Pill */
 .mdv-comment-pill {{
