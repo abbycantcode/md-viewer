@@ -1,6 +1,6 @@
 # md-viewer
 
-Lightweight native GTK3 + WebKit2 Markdown Studio for Linux and the agentic era. Cold-starts in under 250ms, runs offline-first with bundled KaTeX and Mermaid, and requires zero Electron or Node runtimes.
+Lightweight native GTK3 + WebKit2 Markdown Studio for Linux and local coding-agent workflows. Cold-starts in under 250ms, runs offline-first with bundled KaTeX and Mermaid, and requires zero Electron or Node runtimes.
 
 ## Why md-viewer
 
@@ -31,7 +31,7 @@ Open the sidebar (`Ctrl+B` / `F9`) to inspect document word count, byte size, re
 Press `Ctrl+D` or launch from the terminal with `--git-diff` or `--diff` to inspect changes against the previous revision, `git HEAD`, or another file. Diffs include hunk counts, nearest Markdown heading context, and inline word-level insertions and deletions.
 
 ### Portable Review Comments (`*.review.md`)
-Select text or target a section to attach structured review feedback, then export a clean sidecar file (`<stem>.review.md`, headed `# Review: <filename>`). Any coding agent can read the quoted excerpt and `Feedback:` block directly without custom IDE integrations.
+Select text in Preview and click **Add comment** to attach review feedback, then export a clean sidecar file (`<stem>.review.md`, headed `# Review: <filename>`). Any coding agent can read the quoted excerpt and `Feedback:` block directly without custom IDE integrations.
 
 ### Ask Local Agent
 Press `Ctrl+Shift+A` to run a locally installed CLI agent (`claude`, `codex`, or `agy`) asynchronously against the active document (bounded to 32,000 chars) using built-in presets (`Summarize`, `Find Gaps`, `Check Architecture`, `Tighten Prose`) or a custom prompt.
@@ -135,7 +135,7 @@ mdv --clipboard --theme obsidian
 | Toggle Agent Watch Mode | `Ctrl+Shift+W` |
 | Diff View | `Ctrl+D` |
 | Ask Local Agent | `Ctrl+Shift+A` |
-| Cycle Theme (`Paper` / `Obsidian Ink` / `Sepia` / `Nordic Slate`) | `Ctrl+T` |
+| Cycle Theme (`Paper` / `Obsidian` / `Sepia` / `Nordic`) | `Ctrl+T` |
 | Print / Export PDF | `Ctrl+P` |
 | Zoom | `Ctrl++` / `Ctrl+-` / `Ctrl+0` |
 | Link History | `Alt+Left` / `Alt+Right` |
@@ -143,6 +143,16 @@ mdv --clipboard --theme obsidian
 | Copy File Path | `Ctrl+Shift+C` |
 | Shortcuts | `Ctrl+?` / `F1` |
 | Quit | `Ctrl+Q` |
+
+### Preview Vim Navigation
+
+| Action | Keys |
+|---|---|
+| Scroll down / up | `j` / `k` |
+| Half-page down / up | `d` / `u` |
+| Top / bottom of document | `gg` / `G` |
+| Previous / next heading | `[` / `]` |
+| Open find bar | `/` |
 
 ### Global
 

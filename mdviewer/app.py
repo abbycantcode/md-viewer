@@ -328,7 +328,7 @@ class MarkdownViewerApp(Gtk.Application):
         box.pack_start(self._menu_recent_box, False, False, 0)
 
         add_sep()
-        add_item("Diff vs Last Revision / Git / File…", self.action_open_diff_picker)
+        add_item("Compare / Visual Diff…   (Ctrl+D)", self.action_open_diff_picker)
         add_item("Export Review Comments…", self.action_export_reviews)
         add_item("Print / Export PDF…   (Ctrl+P)", self.action_print)
         add_item("Copy File Path   (Ctrl+Shift+C)", self.action_copy_file_path)
@@ -555,8 +555,7 @@ class MarkdownViewerApp(Gtk.Application):
         dot = widgets["dirty_dot"]
         lbl = widgets["title_lbl"]
         if isinstance(lbl, Gtk.Label):
-            prefix = "● " if tab.watch_enabled else ""
-            lbl.set_text(f"{prefix}{tab.display_name}")
+            lbl.set_text(tab.display_name)
         if tab.dirty:
             dot.show()
         else:
@@ -839,12 +838,6 @@ class MarkdownViewerApp(Gtk.Application):
 
             if tab.diff_active:
                 self._headerbar.set_subtitle("Visual Diff")
-            elif tab.watch_enabled:
-                rev = max(1, tab.revision_count)
-                if tab.watch_paused:
-                    self._headerbar.set_subtitle(f"⏸ Watch Paused · Rev {rev}")
-                else:
-                    self._headerbar.set_subtitle(f"● Watching · Rev {rev}")
             elif tab.clipboard_mode:
                 self._headerbar.set_subtitle("Clipboard Studio")
             elif tab.current_file:
