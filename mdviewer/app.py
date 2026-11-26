@@ -49,7 +49,12 @@ def _detect_system_dark() -> bool:
     """Detect dark desktop preference via GNOME color-scheme, GTK settings, or theme luminance."""
     try:
         schema_source = Gio.SettingsSchemaSource.get_default()
-        if schema_source is not None and schema_source.lookup("org.gnome.desktop.interface", True):
+        schema = (
+            schema_source.lookup("org.gnome.desktop.interface", True)
+            if schema_source is not None
+            else None
+        )
+        if schema is not None and schema.has_key("color-scheme"):
             iface = Gio.Settings.new("org.gnome.desktop.interface")
             scheme = str(iface.get_string("color-scheme") or "").lower()
             if "dark" in scheme:
@@ -71,15 +76,18 @@ def _detect_system_dark() -> bool:
             pass
 
     # Fallback: measure actual GTK theme background luminance (catches themes like Obsidian-Glass, Dracula, Nord)
+    probe: Gtk.Window | None = None
     try:
         probe = Gtk.Window()
         ok, rgba = probe.get_style_context().lookup_color("theme_bg_color")
-        probe.destroy()
         if ok:
             luminance = 0.2126 * rgba.red + 0.7152 * rgba.green + 0.0722 * rgba.blue
             return luminance < 0.5
     except Exception:
         pass
+    finally:
+        if probe is not None:
+            probe.destroy()
     return False
 
 
