@@ -11,24 +11,54 @@ chmod +x \
     "$SCRIPT_DIR/md-viewer-clipboard" \
     "$SCRIPT_DIR/md_viewer.py"
 
-echo "[*] Creating venv with system-site-packages (for GTK/WebKit bindings)..."
-uv venv --allow-existing --system-site-packages --python /usr/bin/python3 "$SCRIPT_DIR/.venv"
+SYS_PYTHON="${PYTHON:-/usr/bin/python3}"
+if [ ! -x "$SYS_PYTHON" ]; then
+    SYS_PYTHON="$(command -v python3)"
+fi
 
-echo "[*] Installing markdown and pyyaml into venv via uv..."
-uv pip install --python "$SCRIPT_DIR/.venv/bin/python" markdown pyyaml
+echo "[*] Creating venv with system-site-packages (for GTK/WebKit bindings)..."
+if command -v uv >/dev/null 2>&1; then
+    uv venv --allow-existing --system-site-packages --python "$SYS_PYTHON" "$SCRIPT_DIR/.venv"
+else
+    if [ ! -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+        "$SYS_PYTHON" -m venv --system-site-packages "$SCRIPT_DIR/.venv"
+    fi
+fi
+
+if "$SCRIPT_DIR/.venv/bin/python" -c "import markdown, yaml" >/dev/null 2>&1; then
+    echo "[+] markdown and pyyaml already available via system packages or venv."
+else
+    echo "[*] Installing markdown and pyyaml into venv..."
+    if command -v uv >/dev/null 2>&1; then
+        uv pip install --python "$SCRIPT_DIR/.venv/bin/python" markdown pyyaml
+    else
+        "$SCRIPT_DIR/.venv/bin/python" -m pip install --upgrade markdown pyyaml
+    fi
+fi
 
 echo "[*] Verifying dependencies, mdviewer package, and bundled assets..."
 PYTHONPATH="$SCRIPT_DIR" "$SCRIPT_DIR/.venv/bin/python" -c "
 import os
+import sys
 import py_compile
-import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('WebKit2', '4.1')
-gi.require_version('GtkSource', '300')
-from gi.repository import Gtk, WebKit2, GtkSource
-import markdown
-import yaml
-from pygments.formatters import HtmlFormatter
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('WebKit2', '4.1')
+    gi.require_version('GtkSource', '300')
+    from gi.repository import Gtk, WebKit2, GtkSource
+    import markdown
+    import yaml
+    from pygments.formatters import HtmlFormatter
+except Exception as exc:
+    sys.stderr.write(
+        f'[!] Missing system dependency: {exc}\n'
+        '    Ubuntu/Debian: sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-gtksource-3.0 python3-pygments\n'
+        '    Fedora:        sudo dnf install gtk3 webkit2gtk4.1 gtksourceview3 python3-gobject python3-pygments python3-markdown python3-pyyaml\n'
+        '    Arch Linux:    sudo pacman -S gtk3 webkit2gtk-4.1 gtksourceview3 python-gobject python-pygments python-markdown python-yaml\n'
+    )
+    sys.exit(1)
 
 import mdviewer
 import mdviewer.markdown_engine
