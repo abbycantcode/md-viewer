@@ -8,6 +8,7 @@ WCAG AA (>= 4.5:1) contrast across all four themes, and reduced-motion support.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from urllib.parse import quote
 
 
@@ -484,9 +485,10 @@ def _svg_icon_uri(svg_inner: str, stroke_hex: str) -> str:
     return f"data:image/svg+xml,{quote(svg, safe='')}"
 
 
-def get_document_css(theme_id: str, custom_css: str = "") -> str:
-    """Generate the complete editorial document stylesheet for the given theme."""
-    t = THEMES[resolve_theme_id(theme_id)]
+@lru_cache(maxsize=16)
+def _generate_base_document_css(resolved_theme_id: str) -> str:
+    """Generate and cache the base editorial document stylesheet for a resolved theme."""
+    t = THEMES[resolved_theme_id]
     scheme = "dark" if t.is_dark else "light"
 
     note_icon = _svg_icon_uri(
@@ -1889,6 +1891,218 @@ del.diff-word,
     white-space: pre-wrap;
 }}
 
+/* Source Code Line Anchors & Highlighting */
+.markdown-container .highlight.mdv-source-view pre {{
+    padding: 0.75rem 0;
+}}
+
+.mdv-code-line {{
+    display: block;
+    position: relative;
+    padding: 0 1rem 0 3.75rem;
+    min-height: 1.55em;
+    border-radius: 2px;
+    scroll-margin-top: 3rem;
+}}
+
+.mdv-code-line::before {{
+    content: attr(data-line);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 3rem;
+    padding-right: 0.55rem;
+    text-align: right;
+    color: var(--muted-color);
+    opacity: 0.72;
+    border-right: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+}}
+
+.plain-text-view .mdv-code-line {{
+    padding: 0 0.5rem 0 3.4rem;
+}}
+
+.plain-text-view .mdv-code-line::before {{
+    width: 2.75rem;
+}}
+
+.mdv-line-highlight {{
+    background-color: var(--accent-soft);
+    box-shadow: inset 3px 0 0 var(--accent-color);
+}}
+
+.mdv-line-highlight::before {{
+    color: var(--accent-color);
+    opacity: 1;
+    font-weight: 600;
+}}
+
+.mdv-code-line[data-changed="true"] {{
+    margin-left: 0;
+    padding: 0 1rem 0 3.75rem;
+}}
+
+/* Agentic Artifact Classification Strip */
+.mdv-agentic-strip {{
+    margin: 0 0 1.45rem 0;
+    padding: 0.78rem 1rem;
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--accent-color);
+    border-radius: 6px;
+    background-color: var(--surface-bg);
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--text-color);
+}}
+
+.mdv-agentic-header {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 0.75rem;
+}}
+
+.mdv-agentic-pills {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+}}
+
+.mdv-agentic-pill {{
+    display: inline-flex;
+    align-items: center;
+    padding: 0.14rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    line-height: 1.35;
+}}
+
+.mdv-agentic-pill-env {{
+    background-color: var(--accent-soft);
+    border-color: var(--accent-border);
+    color: var(--accent-color);
+}}
+
+.mdv-agentic-pill-kind {{
+    background-color: var(--surface-alt);
+    border-color: var(--border-color);
+    color: var(--heading-color);
+}}
+
+.mdv-agentic-pill-scope {{
+    background-color: transparent;
+    border-color: var(--border-color);
+    color: var(--muted-color);
+}}
+
+.mdv-agentic-pill-flag {{
+    background-color: var(--accent-soft);
+    border-color: var(--accent-border);
+    color: var(--accent-color);
+}}
+
+.mdv-agentic-stats {{
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--muted-color);
+    font-variant-numeric: tabular-nums;
+}}
+
+.mdv-agentic-meta {{
+    margin-top: 0.5rem;
+    color: var(--muted-color);
+    font-size: 0.84rem;
+}}
+
+.mdv-agentic-name {{
+    color: var(--heading-color);
+    font-weight: 600;
+    margin-right: 0.4rem;
+}}
+
+.mdv-agentic-desc {{
+    color: var(--text-color);
+}}
+
+.mdv-agentic-tags {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.4rem;
+}}
+
+.mdv-agentic-tag-label {{
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--muted-color);
+    margin-right: 0.15rem;
+}}
+
+.mdv-agentic-tag {{
+    display: inline-flex;
+    align-items: center;
+    padding: 0.08rem 0.42rem;
+    border-radius: 3px;
+    border: 1px solid var(--border-subtle);
+    background-color: var(--inline-code-bg);
+    color: var(--text-color);
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+}}
+
+.mdv-agentic-links {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.55rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}}
+
+.mdv-agentic-links-label {{
+    color: var(--muted-color);
+    margin-right: 0.15rem;
+}}
+
+.mdv-agentic-link {{
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.46rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--accent-color);
+    text-decoration: none;
+    transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}}
+
+.mdv-agentic-link:hover {{
+    background-color: var(--accent-soft);
+    border-color: var(--accent-border);
+    color: var(--accent-hover);
+    text-decoration: none;
+}}
+
 /* Selection Review Comment Pill */
 .mdv-comment-pill {{
     position: fixed;
@@ -2019,6 +2233,7 @@ del.diff-word,
     .admonition,
     blockquote,
     details.front-matter-card,
+    .mdv-agentic-strip,
     figure {{
         break-inside: avoid;
         page-break-inside: avoid;
@@ -2031,6 +2246,12 @@ del.diff-word,
     }}
 }}
 """
+    return css
+
+
+def get_document_css(theme_id: str, custom_css: str = "") -> str:
+    """Generate the complete editorial document stylesheet for the given theme."""
+    css = _generate_base_document_css(resolve_theme_id(theme_id))
     if custom_css and custom_css.strip():
-        css = f"{css}\n/* User Custom CSS */\n{custom_css.strip()}\n"
+        return f"{css}\n/* User Custom CSS */\n{custom_css.strip()}\n"
     return css

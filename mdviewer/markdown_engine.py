@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import html
 import json
 from pathlib import Path
 import re
 import secrets
+import threading
 import tomllib
+from urllib.parse import quote, urlparse
 import xml.etree.ElementTree as etree
 
 import markdown
@@ -200,6 +203,7 @@ def _get_bg_hex(resolved_theme: str, dark: bool) -> str:
     return "#0d1117" if dark else "#ffffff"
 
 
+@lru_cache(maxsize=16)
 def _get_document_css(resolved_theme: str, dark: bool) -> str:
     if _theme_get_document_css is not None:
         try:
@@ -209,6 +213,11 @@ def _get_document_css(resolved_theme: str, dark: bool) -> str:
         except Exception:
             pass
     return _DEFAULT_FALLBACK_CSS
+
+
+@lru_cache(maxsize=16)
+def _get_pygments_css(pygments_style: str) -> str:
+    return HtmlFormatter(style=pygments_style).get_style_defs(".highlight")
 
 
 def _get_client_js(
@@ -284,6 +293,7 @@ KATEX_AUTO_PATH = ASSETS_DIR / "katex" / "contrib" / "auto-render.min.js"
 MERMAID_JS_PATH = ASSETS_DIR / "mermaid" / "mermaid.min.js"
 
 
+@lru_cache(maxsize=16)
 def _path_to_uri(path: Path) -> str:
     resolved = path.resolve()
     if GLib is not None:
@@ -295,7 +305,7 @@ def _path_to_uri(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Pygments CustomHtmlFormatter
+# Pygments CustomHtmlFormatter & Line-Anchored Source Formatter
 # ---------------------------------------------------------------------------
 class CustomHtmlFormatter(HtmlFormatter):
     """Custom Pygments HTML formatter that safely escapes language tags on code containers."""
@@ -313,6 +323,109 @@ class CustomHtmlFormatter(HtmlFormatter):
         yield 0, f'<div class="{cls}"{data_attr}>'
         yield from inner
         yield 0, "</div>\n"
+
+
+class _SourceCodeHtmlFormatter(CustomHtmlFormatter):
+    """Pygments HTML formatter emitting ``id="L<n>" data-line="<n>"`` line anchors."""
+
+    def __init__(
+        self,
+        lang_str: str = "",
+        changed_lines: set[int] | None = None,
+        **options,
+    ):
+        super().__init__(lang_str=lang_str, **options)
+        self._changed_lines: set[int] = changed_lines or set()
+
+    def _wrap_div(self, inner):
+        cls = html.escape(
+            (self.cssclass + " mdv-source-view " + self.lang_str).strip(),
+            quote=True,
+        )
+        data_attr = (
+            f' data-lang="{html.escape(self.raw_lang, quote=True)}"' if self.raw_lang else ""
+        )
+        yield 0, f'<div class="{cls}"{data_attr}>'
+        yield from inner
+        yield 0, "</div>\n"
+
+    def _wrap_line_anchors(self, source):
+        line_no = 0
+        changed = self._changed_lines
+        for t, line in source:
+            if t == 1:
+                line_no += 1
+                changed_attr = ' data-changed="true"' if line_no in changed else ""
+                body = line.rstrip("\r\n")
+                yield 1, (
+                    f'<span id="L{line_no}" data-line="{line_no}" '
+                    f'class="mdv-code-line"{changed_attr}>{body}</span>'
+                )
+            else:
+                yield t, line
+
+    def wrap(self, source):
+        return self._wrap_pre(self._wrap_line_anchors(source))
+
+
+@lru_cache(maxsize=64)
+def _get_cached_lexer(lang_name: str):
+    try:
+        return get_lexer_by_name(lang_name)
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=128)
+def _get_cached_code_formatter(lang_str: str, pygments_style: str) -> CustomHtmlFormatter:
+    return CustomHtmlFormatter(
+        lang_str=lang_str,
+        cssclass="highlight",
+        style=pygments_style,
+    )
+
+
+@lru_cache(maxsize=256)
+def _highlight_fenced_code_cached(code: str, lang: str, pygments_style: str) -> str | None:
+    lexer = _get_cached_lexer(lang)
+    if lexer is None:
+        return None
+    formatter = _get_cached_code_formatter(f"language-{lang}", pygments_style)
+    return pygments_highlight(code, lexer, formatter)
+
+
+def _make_code_block_container(
+    code: str,
+    lang: str,
+    pygments_style: str,
+    changed: bool = False,
+) -> str:
+    """Highlight a fenced code block with cached Pygments lexer/formatter (no lang guessing)."""
+    if lang:
+        if len(code) <= 8192:
+            highlighted = _highlight_fenced_code_cached(code, lang, pygments_style)
+        else:
+            lexer = _get_cached_lexer(lang)
+            highlighted = (
+                pygments_highlight(
+                    code, lexer, _get_cached_code_formatter(f"language-{lang}", pygments_style)
+                )
+                if lexer is not None
+                else None
+            )
+        if highlighted is not None:
+            if changed:
+                return highlighted.replace("<div ", '<div data-changed="true" ', 1)
+            return highlighted
+
+    lang_cls = f" language-{html.escape(lang, quote=True)}" if lang else ""
+    lang_attr = f' data-lang="{html.escape(lang, quote=True)}"' if lang else ""
+    changed_attr = ' data-changed="true"' if changed else ""
+    escaped_code = html.escape(code, quote=False)
+    return (
+        f'<div class="highlight{lang_cls}"{lang_attr}{changed_attr}>'
+        f"<pre><span></span><code>{escaped_code}</code></pre></div>\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -458,9 +571,14 @@ _FENCE_OPEN_RE = re.compile(r"^([ ]{0,3})(`{3,}|~{3,})([^\n]*)$")
 
 
 def _is_fence_close(line: str, fence_char: str, fence_len: int) -> bool:
-    stripped = line.rstrip("\r\n")
-    m = re.match(rf"^[ ]{{0,3}}{re.escape(fence_char)}{{{fence_len},}}[ \t]*$", stripped)
-    return m is not None
+    stripped = line.rstrip(" \t\r\n")
+    if not stripped:
+        return False
+    lead = len(stripped) - len(stripped.lstrip(" "))
+    if lead > 3:
+        return False
+    core = stripped[lead:]
+    return len(core) >= fence_len and core == fence_char * len(core)
 
 
 def _is_fence_open(line: str) -> tuple[str, int, str] | None:
@@ -635,14 +753,145 @@ class TaskListExtension(Extension):
 
     def __init__(self, source_lines: list[int] | None = None, **kwargs) -> None:
         self.source_lines = source_lines or []
+        self._processor: _TaskListTreeprocessor | None = None
         super().__init__(**kwargs)
 
+    def set_source_lines(self, source_lines: list[int]) -> None:
+        self.source_lines = source_lines
+        if self._processor is not None:
+            self._processor.source_lines = source_lines
+
     def extendMarkdown(self, md: markdown.Markdown) -> None:
+        self._processor = _TaskListTreeprocessor(md, self.source_lines)
         md.treeprocessors.register(
-            _TaskListTreeprocessor(md, self.source_lines),
+            self._processor,
             "gfm_task_list",
             15,
         )
+
+
+def _unique_slug_fast(base_slug: str, seen: set[str], counters: dict[str, int]) -> str:
+    """O(1)-amortized drop-in replacement for ``markdown.extensions.toc.unique``."""
+    if base_slug and base_slug not in seen:
+        seen.add(base_slug)
+        return base_slug
+
+    m = toc.IDCOUNT_RE.match(base_slug)
+    if m:
+        stem = m.group(1)
+        idx = max(int(m.group(2)) + 1, counters.get(base_slug, 1))
+        counter_key = base_slug
+    else:
+        stem = base_slug
+        idx = counters.get(base_slug, 1)
+        counter_key = base_slug
+
+    while True:
+        candidate = f"{stem}_{idx}"
+        if candidate not in seen:
+            seen.add(candidate)
+            counters[counter_key] = idx + 1
+            return candidate
+        idx += 1
+
+
+class _FastTocTreeprocessor(toc.TocTreeprocessor):
+    """TOC treeprocessor replacing O(H^2) ``toc.unique`` probing with O(1) counters."""
+
+    def run(self, doc: etree.Element) -> None:
+        if not hasattr(toc, "render_inner_html") or not hasattr(toc, "remove_fnrefs"):
+            super().run(doc)
+            return
+
+        used_ids: set[str] = set()
+        has_marker = False
+        marker = self.marker
+        for el in doc.iter():
+            el_id = el.attrib.get("id")
+            if el_id is not None:
+                used_ids.add(el_id)
+            if marker and not has_marker and el.text and marker in el.text:
+                has_marker = True
+
+        slug_counters: dict[str, int] = {}
+
+        # Fast path when [TOC] marker is absent and permalinks/anchors are disabled:
+        # assign exact toc-matching IDs without deep-copying or building unused TOC HTML.
+        if not has_marker and not self.use_anchors and self.use_permalinks in (False, None):
+            header_rgx = self.header_rgx
+            slugify = self.slugify
+            sep = self.sep
+            for el in doc.iter():
+                tag = el.tag
+                if isinstance(tag, str) and len(tag) == 2 and tag[0] == "h" and header_rgx.match(tag):
+                    self.set_level(el)
+                    if "id" not in el.attrib:
+                        # Exclude footnote <sup> refs if any exist inside the heading.
+                        if any(child.tag == "sup" for child in el.iter()):
+                            innerhtml = toc.render_inner_html(toc.remove_fnrefs(el), self.md)
+                            plain_name = html.unescape(toc.strip_tags(innerhtml))
+                        else:
+                            plain_name = "".join(el.itertext())
+                        base = slugify(plain_name, sep)
+                        el.attrib["id"] = _unique_slug_fast(base, used_ids, slug_counters)
+                    if "data-toc-label" in el.attrib:
+                        del el.attrib["data-toc-label"]
+            self.md.toc_tokens = []
+            self.md.toc = ""
+            return
+
+        toc_tokens: list[dict] = []
+        for el in doc.iter():
+            if isinstance(el.tag, str) and self.header_rgx.match(el.tag):
+                self.set_level(el)
+                innerhtml = toc.render_inner_html(toc.remove_fnrefs(el), self.md)
+                name = toc.strip_tags(innerhtml)
+
+                if "id" not in el.attrib:
+                    base = self.slugify(html.unescape(name), self.sep)
+                    el.attrib["id"] = _unique_slug_fast(base, used_ids, slug_counters)
+
+                data_toc_label = ""
+                if "data-toc-label" in el.attrib:
+                    data_toc_label = toc.run_postprocessors(
+                        toc.unescape(el.attrib["data-toc-label"]), self.md
+                    )
+                    name = toc.escape_cdata(toc.strip_tags(data_toc_label))
+                    del el.attrib["data-toc-label"]
+
+                level = int(el.tag[-1])
+                if self.toc_top <= level <= self.toc_bottom:
+                    toc_tokens.append(
+                        {
+                            "level": level,
+                            "id": toc.unescape(el.attrib["id"]),
+                            "name": name,
+                            "html": innerhtml,
+                            "data-toc-label": data_toc_label,
+                        }
+                    )
+
+                if self.use_anchors:
+                    self.add_anchor(el, el.attrib["id"])
+                if self.use_permalinks not in [False, None]:
+                    self.add_permalink(el, el.attrib["id"])
+
+        toc_tokens = toc.nest_toc_tokens(toc_tokens)
+        div = self.build_toc_div(toc_tokens)
+        if self.marker:
+            self.replace_marker(doc, div)
+
+        rendered_toc = self.md.serializer(div)
+        for pp in self.md.postprocessors:
+            rendered_toc = pp.run(rendered_toc)
+        self.md.toc_tokens = toc_tokens
+        self.md.toc = rendered_toc
+
+
+class _FastTocExtension(toc.TocExtension):
+    """Drop-in TocExtension using ``_FastTocTreeprocessor``."""
+
+    TreeProcessorClass = _FastTocTreeprocessor
 
 
 class StrikethroughExtension(Extension):
@@ -656,10 +905,18 @@ class StrikethroughExtension(Extension):
         )
 
 
+_BARE_URL_PREV_DISALLOWED = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_/@"
+)
+
+
 class _BareUrlInlineProcessor(InlineProcessor):
     """Turn bare ``http://`` / ``https://`` URLs into ``<a>`` links outside code/links."""
 
     def handleMatch(self, m: re.Match[str], data: str):
+        start = m.start(1)
+        if start > 0 and data[start - 1] in _BARE_URL_PREV_DISALLOWED:
+            return None, None, None
         url = m.group(1)
         trailing = ""
         while url and url[-1] in ".,;:!?":
@@ -715,7 +972,7 @@ class BareUrlExtension(Extension):
 
     def extendMarkdown(self, md: markdown.Markdown) -> None:
         md.inlinePatterns.register(
-            _BareUrlInlineProcessor(r"(?<![A-Za-z0-9_/@])(https?://[^\s<>\"'`]+)", md),
+            _BareUrlInlineProcessor(r"(https?://[^\s<>\"'`]+)", md),
             "bare_url",
             75,
         )
@@ -776,10 +1033,18 @@ def _make_math_inline_container(code: str) -> str:
     return f'<span class="katex-inline-math" data-math="{escaped}">${escaped}$</span>'
 
 
+_INLINE_CODE_RE = re.compile(r"(?<!\\)(`+)(.+?)(?<!`)\1(?!`)")
+_DISPLAY_MATH_DOLLAR_RE = re.compile(r"(?<!\\)\$\$\n?([\s\S]*?)\n?(?<!\\)\$\$")
+_DISPLAY_MATH_BRACKET_RE = re.compile(r"(?<!\\)\\\[\n?([\s\S]*?)\n?(?<!\\)\\\]")
+_INLINE_MATH_DOLLAR_RE = re.compile(r"(?<!\\)\$(?!\s)([^\$\n]+?)(?<!\s)(?<!\\)\$(?!\d)")
+_INLINE_MATH_PAREN_RE = re.compile(r"(?<!\\)\\\((.+?)(?<!\\)\\\)")
+
+
 def _preprocess_code_first(
     body: str,
     line_offset: int = 0,
     changed_lines: set[int] | None = None,
+    pygments_style: str | None = None,
 ) -> _PreprocessContext:
     """Protect 3+ backtick/tilde fences first, then inline code, then math."""
     token_prefix = f"XMDPX{secrets.token_hex(4).upper()}"
@@ -842,6 +1107,16 @@ def _preprocess_code_first(
             )
             block_line_ranges[tok] = (start_line, end_line)
             out_parts.append(f"\n\n{tok}\n\n")
+        elif pygments_style is not None:
+            tok = next_token("CODEBLOCK")
+            placeholders[tok] = _make_code_block_container(
+                inner_text,
+                lang,
+                pygments_style,
+                changed=is_changed(start_line, end_line),
+            )
+            block_line_ranges[tok] = (start_line, end_line)
+            out_parts.append(f"\n\n{tok}\n\n")
         else:
             tok = next_token("CODEBLOCK")
             protected_code_blocks[tok] = raw_fence
@@ -861,7 +1136,7 @@ def _preprocess_code_first(
         protected_inline[tok] = m.group(0)
         return tok
 
-    text = re.sub(r"(?<!\\)(`+)(.+?)(?<!`)\1(?!`)", protect_inline, text)
+    text = _INLINE_CODE_RE.sub(protect_inline, text)
 
     # 4. Extract display math blocks: $$ ... $$ and \[ ... \]
     def repl_display_math(m: re.Match[str]) -> str:
@@ -869,8 +1144,10 @@ def _preprocess_code_first(
         placeholders[tok] = _make_math_block_container(m.group(1))
         return f"\n\n{tok}\n\n"
 
-    text = re.sub(r"(?<!\\)\$\$\n?([\s\S]*?)\n?(?<!\\)\$\$", repl_display_math, text)
-    text = re.sub(r"(?<!\\)\\\[\n?([\s\S]*?)\n?(?<!\\)\\\]", repl_display_math, text)
+    if "$$" in text:
+        text = _DISPLAY_MATH_DOLLAR_RE.sub(repl_display_math, text)
+    if "\\[" in text:
+        text = _DISPLAY_MATH_BRACKET_RE.sub(repl_display_math, text)
 
     # 5. Extract inline math: $...$ and \(...\)
     def repl_inline_math(m: re.Match[str]) -> str:
@@ -878,14 +1155,20 @@ def _preprocess_code_first(
         placeholders[tok] = _make_math_inline_container(m.group(1))
         return tok
 
-    text = re.sub(r"(?<!\\)\$(?!\s)([^\$\n]+?)(?<!\s)(?<!\\)\$(?!\d)", repl_inline_math, text)
-    text = re.sub(r"(?<!\\)\\\((.+?)(?<!\\)\\\)", repl_inline_math, text)
+    if "$" in text:
+        text = _INLINE_MATH_DOLLAR_RE.sub(repl_inline_math, text)
+    if "\\(" in text:
+        text = _INLINE_MATH_PAREN_RE.sub(repl_inline_math, text)
 
-    # 6. Restore protected inline code and fenced code blocks for Markdown parsing.
-    for tok, original in protected_inline.items():
-        text = text.replace(tok, original)
-    for tok, original in protected_code_blocks.items():
-        text = text.replace(tok, original)
+    # 6. Restore protected inline code and fenced code blocks in single O(N) passes.
+    if protected_inline:
+        inline_tok_re = re.compile(rf"{re.escape(token_prefix)}INLINE\d+X")
+        text = inline_tok_re.sub(lambda m: protected_inline.get(m.group(0), m.group(0)), text)
+    if protected_code_blocks:
+        code_tok_re = re.compile(rf"{re.escape(token_prefix)}CODEBLOCK\d+X")
+        text = code_tok_re.sub(
+            lambda m: protected_code_blocks.get(m.group(0), m.group(0)), text
+        )
 
     return _PreprocessContext(
         text=text,
@@ -907,22 +1190,33 @@ def preprocess_markdown(text: str) -> tuple[str, dict[str, str]]:
 _ATX_HEADING_RE = re.compile(r"^[ ]{0,3}(#{1,6})(?:[ \t]+(.*))?$")
 _MD_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _INLINE_TAG_RE = re.compile(r"<[^>]+>")
+_TRAILING_HASH_RE = re.compile(r"[ \t]+#+\s*$")
+_EMPHASIS_RE = re.compile(r"(\*\*|__|\*|_)")
+_HEADING_ID_RE = re.compile(r'(<h[1-6]\b[^>]*\bid="([^"]+)"[^>]*)(>)')
+_TASK_LI_RE = re.compile(r'(<li\b[^>]*\bclass="[^"]*\btask-list-item\b[^"]*"[^>]*>)([\s\S]*?</li>)')
+_DATA_SOURCE_LINE_RE = re.compile(r'data-source-line="(\d+)"')
+_PARA_RE = re.compile(r"(<p\b[^>]*>)([\s\S]*?)(</p>)")
 
 
 def _strip_heading_markdown(raw: str) -> str:
-    text = re.sub(r"[ \t]+#+\s*$", "", raw).strip()
-    text = _MD_LINK_RE.sub(r"\1", text)
-    text = _INLINE_TAG_RE.sub("", text)
-    text = text.replace("`", "").replace("~~", "")
-    text = re.sub(r"(\*\*|__|\*|_)", "", text)
+    text = _TRAILING_HASH_RE.sub("", raw).strip()
+    if "[" in text:
+        text = _MD_LINK_RE.sub(r"\1", text)
+    if "<" in text:
+        text = _INLINE_TAG_RE.sub("", text)
+    if "`" in text or "~~" in text:
+        text = text.replace("`", "").replace("~~", "")
+    if "*" in text or "_" in text:
+        text = _EMPHASIS_RE.sub("", text)
     return text.strip()
 
 
-def extract_headings(text: str) -> list[HeadingItem]:
-    """Extract headings with 1-based source line numbers and ``toc``-matching slugs."""
-    _, body, line_offset = parse_front_matter_with_offset(text)
+def _scan_body_metadata(body: str, line_offset: int) -> tuple[list[HeadingItem], list[int]]:
+    """Single-pass scan extracting headings and 1-based task checkbox lines outside fences."""
     headings: list[HeadingItem] = []
+    task_lines: list[int] = []
     seen_slugs: set[str] = set()
+    slug_counters: dict[str, int] = {}
     fence_state: tuple[str, int] | None = None
 
     for idx, line in enumerate(body.splitlines(), start=1):
@@ -931,33 +1225,41 @@ def extract_headings(text: str) -> list[HeadingItem]:
                 fence_state = None
             continue
 
-        opened = _is_fence_open(line)
-        if opened is not None:
-            fence_state = (opened[0], opened[1])
-            continue
+        if "`" in line or "~" in line:
+            opened = _is_fence_open(line)
+            if opened is not None:
+                fence_state = (opened[0], opened[1])
+                continue
 
-        m = _ATX_HEADING_RE.match(line)
-        if not m:
-            continue
+        if "#" in line:
+            m = _ATX_HEADING_RE.match(line)
+            if m:
+                level = len(m.group(1))
+                raw_title = (m.group(2) or "").strip()
+                if raw_title and set(raw_title) != {"#"}:
+                    plain_title = _strip_heading_markdown(raw_title)
+                    base_slug = toc.slugify(plain_title, "-")
+                    unique_slug = _unique_slug_fast(base_slug, seen_slugs, slug_counters)
+                    headings.append(
+                        HeadingItem(
+                            level=level,
+                            text=plain_title,
+                            slug=unique_slug,
+                            line=line_offset + idx,
+                        )
+                    )
+                continue
 
-        level = len(m.group(1))
-        raw_title = (m.group(2) or "").strip()
-        if not raw_title or set(raw_title) == {"#"}:
-            continue
+        if "[" in line and _TASK_LINE_RE.match(line):
+            task_lines.append(line_offset + idx)
 
-        plain_title = _strip_heading_markdown(raw_title)
-        base_slug = toc.slugify(plain_title, "-")
-        unique_slug = toc.unique(base_slug, seen_slugs)
-        seen_slugs.add(unique_slug)
-        headings.append(
-            HeadingItem(
-                level=level,
-                text=plain_title,
-                slug=unique_slug,
-                line=line_offset + idx,
-            )
-        )
+    return headings, task_lines
 
+
+def extract_headings(text: str) -> list[HeadingItem]:
+    """Extract headings with 1-based source line numbers and ``toc``-matching slugs."""
+    _, body, line_offset = parse_front_matter_with_offset(text)
+    headings, _ = _scan_body_metadata(body, line_offset)
     return headings
 
 
@@ -977,74 +1279,79 @@ def _mark_changed_elements(
 
     matched_lines: set[int] = set(already_covered_lines or ())
 
-    # 1. Mark headings whose 1-based source line is in changed_lines.
-    changed_slugs: set[str] = set()
+    # 1. Mark headings whose 1-based source line is in changed_lines in one pass.
+    changed_slugs_escaped: set[str] = set()
     for h in headings:
         if h.line in changed_lines:
-            changed_slugs.add(h.slug)
+            changed_slugs_escaped.add(html.escape(h.slug, quote=True))
             matched_lines.add(h.line)
 
-    for slug in changed_slugs:
-        escaped_slug = re.escape(html.escape(slug, quote=True))
-        html_body = re.sub(
-            rf'(<h[1-6]\b[^>]*\bid="{escaped_slug}"[^>]*)(>)',
-            r'\1 data-changed="true"\2',
-            html_body,
-            count=1,
-        )
+    if changed_slugs_escaped:
+        def _mark_heading(m: re.Match[str]) -> str:
+            tag_prefix, attr_id, tag_end = m.group(1), m.group(2), m.group(3)
+            if attr_id in changed_slugs_escaped and 'data-changed="true"' not in tag_prefix:
+                return f'{tag_prefix} data-changed="true"{tag_end}'
+            return m.group(0)
+
+        html_body = _HEADING_ID_RE.sub(_mark_heading, html_body)
 
     # 2. Mark task-list <li> items whose <input data-source-line="L"> matches changed_lines.
-    def _mark_task_li(m: re.Match[str]) -> str:
-        li_open, inner = m.group(1), m.group(2)
-        if 'data-changed="true"' in li_open:
+    if "task-list-item" in html_body:
+        def _mark_task_li(m: re.Match[str]) -> str:
+            li_open, inner = m.group(1), m.group(2)
+            if 'data-changed="true"' in li_open:
+                return m.group(0)
+            line_match = _DATA_SOURCE_LINE_RE.search(inner)
+            if line_match:
+                line_num = int(line_match.group(1))
+                if line_num in changed_lines:
+                    matched_lines.add(line_num)
+                    return li_open[:-1] + ' data-changed="true">' + inner
             return m.group(0)
-        line_match = re.search(r'data-source-line="(\d+)"', inner)
-        if line_match:
-            line_num = int(line_match.group(1))
-            if line_num in changed_lines:
-                matched_lines.add(line_num)
-                return li_open[:-1] + ' data-changed="true">' + inner
-        return m.group(0)
 
-    html_body = re.sub(
-        r'(<li\b[^>]*\bclass="[^"]*\btask-list-item\b[^"]*"[^>]*>)([\s\S]*?</li>)',
-        _mark_task_li,
-        html_body,
-    )
+        html_body = _TASK_LI_RE.sub(_mark_task_li, html_body)
 
-    # 3. Mark matching paragraph blocks for remaining changed lines.
+    # 3. Mark matching paragraph blocks for remaining changed lines using single compiled matcher.
     remaining_lines = sorted(ln for ln in changed_lines if ln not in matched_lines)
     if body_text and remaining_lines:
         body_lines = body_text.splitlines()
+        seen_snips: set[str] = set()
         snippets: list[str] = []
         for ln in remaining_lines:
             rel_idx = ln - line_offset - 1
             if 0 <= rel_idx < len(body_lines):
                 snippet = _strip_heading_markdown(body_lines[rel_idx]).strip()
                 if len(snippet) >= 3:
-                    snippets.append(html.escape(snippet, quote=False))
+                    escaped_snip = html.escape(snippet, quote=False)
+                    if escaped_snip not in seen_snips:
+                        seen_snips.add(escaped_snip)
+                        snippets.append(escaped_snip)
 
         if snippets:
+            # Cap single alternation regex branches to keep compilation fast on giant diffs.
+            snippet_re = re.compile("|".join(re.escape(s) for s in snippets[:256]))
+            overflow_snips = snippets[256:]
+
             def _mark_para(m: re.Match[str]) -> str:
                 tag_open, content, tag_close = m.group(1), m.group(2), m.group(3)
                 if 'data-changed="true"' in tag_open:
                     return m.group(0)
-                plain = _INLINE_TAG_RE.sub("", content)
-                if any(snip in plain for snip in snippets):
+                plain = _INLINE_TAG_RE.sub("", content) if "<" in content else content
+                if (
+                    plain in seen_snips
+                    or snippet_re.search(plain) is not None
+                    or (overflow_snips and any(s in plain for s in overflow_snips))
+                ):
                     return tag_open[:-1] + ' data-changed="true">' + content + tag_close
                 return m.group(0)
 
-            html_body = re.sub(
-                r"(<p\b[^>]*>)([\s\S]*?)(</p>)",
-                _mark_para,
-                html_body,
-            )
+            html_body = _PARA_RE.sub(_mark_para, html_body)
 
     return html_body
 
 
 # ---------------------------------------------------------------------------
-# Technical File Renderers
+# Technical, Agentic & Source File Renderers
 # ---------------------------------------------------------------------------
 _EXTENSION_KIND_MAP: dict[str, str] = {
     ".md": "markdown",
@@ -1052,6 +1359,7 @@ _EXTENSION_KIND_MAP: dict[str, str] = {
     ".mdown": "markdown",
     ".mkd": "markdown",
     ".mdx": "markdown",
+    ".mdc": "markdown",
     ".json": "json",
     ".jsonc": "jsonc",
     ".yaml": "yaml",
@@ -1062,17 +1370,185 @@ _EXTENSION_KIND_MAP: dict[str, str] = {
     ".mmd": "mermaid",
     ".mermaid": "mermaid",
     ".txt": "text",
+    ".log": "text",
+    ".csv": "text",
+    ".tsv": "text",
 }
+
+_SOURCE_LEXER_BY_EXT: dict[str, str] = {
+    ".py": "python",
+    ".pyi": "python",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".fish": "fish",
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".tsx": "tsx",
+    ".jsx": "jsx",
+    ".rs": "rust",
+    ".go": "go",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".cs": "csharp",
+    ".css": "css",
+    ".scss": "scss",
+    ".less": "less",
+    ".html": "html",
+    ".htm": "html",
+    ".xml": "xml",
+    ".sql": "sql",
+    ".rb": "ruby",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".swift": "swift",
+    ".lua": "lua",
+    ".php": "php",
+    ".pl": "perl",
+    ".r": "r",
+    ".scala": "scala",
+    ".zig": "zig",
+    ".nim": "nim",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".erl": "erlang",
+    ".hs": "haskell",
+    ".ml": "ocaml",
+    ".vim": "vim",
+    ".nix": "nix",
+    ".tf": "terraform",
+    ".hcl": "terraform",
+    ".graphql": "graphql",
+    ".gql": "graphql",
+    ".proto": "protobuf",
+    ".vue": "html",
+    ".svelte": "html",
+    ".ini": "ini",
+    ".cfg": "ini",
+    ".conf": "ini",
+    ".properties": "properties",
+    ".rules": "python",
+    ".star": "python",
+    ".bzl": "python",
+    ".cmake": "cmake",
+    ".mk": "makefile",
+    ".gradle": "groovy",
+    ".dockerfile": "docker",
+    ".desktop": "ini",
+}
+
+_SOURCE_LEXER_BY_NAME: dict[str, str] = {
+    "makefile": "makefile",
+    "gnumakefile": "makefile",
+    "dockerfile": "docker",
+    "containerfile": "docker",
+    "justfile": "makefile",
+    "vagrantfile": "ruby",
+    "gemfile": "ruby",
+    "rakefile": "ruby",
+    "brewfile": "ruby",
+    "cmakelists.txt": "cmake",
+    "meson.build": "python",
+    "build": "python",
+    "workspace": "python",
+    ".bashrc": "bash",
+    ".zshrc": "bash",
+    ".profile": "bash",
+    ".gitignore": "text",
+    ".dockerignore": "text",
+    ".editorconfig": "ini",
+}
+
+_MARKDOWN_EXACT_NAMES: frozenset[str] = frozenset(
+    {
+        ".cursorrules",
+        ".clauderules",
+        ".windsurfrules",
+    }
+)
+
+_TEXT_EXACT_NAMES: frozenset[str] = frozenset(
+    {
+        "license",
+        "copying",
+        "authors",
+        "notice",
+        "procfile",
+    }
+)
+
+_SUPPORTED_LOCAL_EXTENSIONS: frozenset[str] = frozenset(
+    set(_EXTENSION_KIND_MAP) | set(_SOURCE_LEXER_BY_EXT)
+)
+_SUPPORTED_EXACT_FILENAMES: frozenset[str] = frozenset(
+    set(_SOURCE_LEXER_BY_NAME)
+    | _MARKDOWN_EXACT_NAMES
+    | _TEXT_EXACT_NAMES
+    | {"readme", "changelog", "todo"}
+)
+
+
+def is_supported_local_file(path: str | Path) -> bool:
+    """Return True if ``path`` is a Markdown, technical, agentic, or source file Markveil renders."""
+    if not path:
+        return False
+    p = Path(path)
+    name = p.name.lower()
+    if not name:
+        return False
+    if name in _SUPPORTED_EXACT_FILENAMES:
+        return True
+    if name.startswith(("dockerfile.", "makefile.", "license.")):
+        return True
+    suffix = p.suffix.lower()
+    return bool(suffix and suffix in _SUPPORTED_LOCAL_EXTENSIONS)
+
+
+def _resolve_source_lexer(file_path: str | None) -> str:
+    if not file_path:
+        return "text"
+    p = Path(file_path)
+    name = p.name.lower()
+    if name in _SOURCE_LEXER_BY_NAME:
+        return _SOURCE_LEXER_BY_NAME[name]
+    if name.startswith("dockerfile."):
+        return "docker"
+    if name.startswith("makefile."):
+        return "makefile"
+    return _SOURCE_LEXER_BY_EXT.get(p.suffix.lower(), "text")
 
 
 def detect_file_kind(file_path: str | None) -> str:
-    """Detect rendering file kind from a file path extension."""
+    """Detect rendering file kind from a file path extension or well-known filename."""
     if not file_path:
         return "markdown"
-    suffix = Path(file_path).suffix.lower()
+    p = Path(file_path)
+    name = p.name.lower()
+    if name in _MARKDOWN_EXACT_NAMES:
+        return "markdown"
+    if name in _SOURCE_LEXER_BY_NAME or name.startswith(("dockerfile.", "makefile.")):
+        return "code"
+    if name in _TEXT_EXACT_NAMES or name.startswith("license."):
+        return "text"
+    suffix = p.suffix.lower()
     if not suffix:
         return "markdown"
-    return _EXTENSION_KIND_MAP.get(suffix, "text")
+    if suffix in _EXTENSION_KIND_MAP:
+        return _EXTENSION_KIND_MAP[suffix]
+    if suffix in _SOURCE_LEXER_BY_EXT:
+        return "code"
+    return "text"
 
 
 def _strip_jsonc_comments_and_trailing_commas(text: str) -> str:
@@ -1155,30 +1631,94 @@ def _strip_jsonc_comments_and_trailing_commas(text: str) -> str:
     return "".join(final)
 
 
-def _render_json_tree_html(value: object, key: str | None = None, depth: int = 0) -> str:
+_JSON_TREE_MAX_DEPTH = 20
+_JSON_TREE_MAX_NODES = 2000
+
+
+def _render_json_tree_html(
+    value: object,
+    key: str | None = None,
+    depth: int = 0,
+    *,
+    max_depth: int = _JSON_TREE_MAX_DEPTH,
+    max_nodes: int = _JSON_TREE_MAX_NODES,
+    _state: list[int] | None = None,
+) -> str:
+    if _state is None:
+        _state = [0]
+    _state[0] += 1
+
     label_html = (
         f'<span class="json-key">{html.escape(key)}</span>: ' if key is not None else ""
     )
     if isinstance(value, dict):
-        open_attr = " open" if depth < 2 else ""
         count = len(value)
-        children = "".join(_render_json_tree_html(v, str(k), depth + 1) for k, v in value.items())
+        if depth >= max_depth:
+            return (
+                f'<div class="json-leaf">{label_html}'
+                f'<span class="json-meta">Object ({count}) — max depth reached</span></div>'
+            )
+        open_attr = " open" if depth < 2 else ""
+        child_parts: list[str] = []
+        rendered = 0
+        for k, v in value.items():
+            if _state[0] >= max_nodes:
+                remaining = count - rendered
+                child_parts.append(
+                    f'<div class="json-leaf"><span class="json-meta">'
+                    f"… {remaining} more items</span></div>"
+                )
+                break
+            child_parts.append(
+                _render_json_tree_html(
+                    v,
+                    str(k),
+                    depth + 1,
+                    max_depth=max_depth,
+                    max_nodes=max_nodes,
+                    _state=_state,
+                )
+            )
+            rendered += 1
         return (
             f'<details class="json-node"{open_attr}>'
-            f"<summary>{label_html}<span class=\"json-meta\">Object ({count})</span></summary>"
-            f'<div class="json-children">{children}</div>'
+            f'<summary>{label_html}<span class="json-meta">Object ({count})</span></summary>'
+            f'<div class="json-children">{"".join(child_parts)}</div>'
             "</details>"
         )
     if isinstance(value, list):
-        open_attr = " open" if depth < 2 else ""
         count = len(value)
-        children = "".join(
-            _render_json_tree_html(item, f"[{idx}]", depth + 1) for idx, item in enumerate(value)
-        )
+        if depth >= max_depth:
+            return (
+                f'<div class="json-leaf">{label_html}'
+                f'<span class="json-meta">Array ({count}) — max depth reached</span></div>'
+            )
+        open_attr = " open" if depth < 2 else ""
+        child_parts = []
+        rendered = 0
+        for idx, item in enumerate(value):
+            if _state[0] >= max_nodes:
+                remaining = count - rendered
+                child_parts.append(
+                    f'<div class="json-leaf"><span class="json-meta">'
+                    f"… {remaining} more items</span></div>"
+                )
+                break
+            child_parts.append(
+                _render_json_tree_html(
+                    item,
+                    f"[{idx}]",
+                    depth + 1,
+                    max_depth=max_depth,
+                    max_nodes=max_nodes,
+                    _state=_state,
+                )
+            )
+            rendered += 1
         return (
             f'<details class="json-node"{open_attr}>'
-            f"<summary>{label_html}<span class=\"json-meta\">Array ({count})</span></summary>"
-            f'<div class="json-children">{children}</div>'
+            f'<summary>{label_html}<span class="json-meta">Array ({count})</span></summary>'
+            f'<div class="json-children">{"".join(child_parts)}</div>'
             "</details>"
         )
     if value is None:
@@ -1192,20 +1732,56 @@ def _render_json_tree_html(value: object, key: str | None = None, depth: int = 0
     return f'<div class="json-leaf">{label_html}{val_html}</div>'
 
 
-def _highlight_code(text: str, lexer_name: str, pygments_style: str) -> str:
+def _highlight_code(
+    text: str,
+    lexer_name: str,
+    pygments_style: str,
+    *,
+    with_line_anchors: bool = True,
+    changed_lines: set[int] | None = None,
+) -> str:
     try:
         lexer = get_lexer_by_name(lexer_name)
     except Exception:
         lexer = get_lexer_by_name("text")
-    formatter = CustomHtmlFormatter(
-        lang_str=f"language-{lexer_name}",
-        cssclass="highlight",
-        style=pygments_style,
-    )
+    if with_line_anchors:
+        formatter: HtmlFormatter = _SourceCodeHtmlFormatter(
+            lang_str=f"language-{lexer_name}",
+            changed_lines=changed_lines,
+            cssclass="highlight",
+            style=pygments_style,
+        )
+    else:
+        formatter = CustomHtmlFormatter(
+            lang_str=f"language-{lexer_name}",
+            cssclass="highlight",
+            style=pygments_style,
+        )
     return pygments_highlight(text, lexer, formatter)
 
 
-def _render_json_document(text: str, kind: str, pygments_style: str) -> str:
+def _render_code_document(
+    text: str,
+    file_path: str | None,
+    pygments_style: str,
+    changed_lines: set[int] | None = None,
+) -> str:
+    lexer_name = _resolve_source_lexer(file_path)
+    return _highlight_code(
+        text,
+        lexer_name,
+        pygments_style,
+        with_line_anchors=True,
+        changed_lines=changed_lines,
+    )
+
+
+def _render_json_document(
+    text: str,
+    kind: str,
+    pygments_style: str,
+    changed_lines: set[int] | None = None,
+) -> str:
     label = "JSONC" if kind == "jsonc" else "JSON"
     payload = _strip_jsonc_comments_and_trailing_commas(text) if kind == "jsonc" else text
     tree_html = ""
@@ -1225,11 +1801,17 @@ def _render_json_document(text: str, kind: str, pygments_style: str) -> str:
             f"Invalid {label}: {err_msg}</div>"
         )
 
-    code_html = _highlight_code(text, "json", pygments_style)
+    code_html = _highlight_code(
+        text, "json", pygments_style, with_line_anchors=True, changed_lines=changed_lines
+    )
     return f"{badge}\n{tree_html}\n{code_html}"
 
 
-def _render_yaml_document(text: str, pygments_style: str) -> str:
+def _render_yaml_document(
+    text: str,
+    pygments_style: str,
+    changed_lines: set[int] | None = None,
+) -> str:
     try:
         docs = list(yaml.safe_load_all(text))
         badge = (
@@ -1242,11 +1824,17 @@ def _render_yaml_document(text: str, pygments_style: str) -> str:
             '<div class="file-status-badge validation-badge status-invalid invalid">'
             f"Invalid YAML: {err_msg}</div>"
         )
-    code_html = _highlight_code(text, "yaml", pygments_style)
+    code_html = _highlight_code(
+        text, "yaml", pygments_style, with_line_anchors=True, changed_lines=changed_lines
+    )
     return f"{badge}\n{code_html}"
 
 
-def _render_toml_document(text: str, pygments_style: str) -> str:
+def _render_toml_document(
+    text: str,
+    pygments_style: str,
+    changed_lines: set[int] | None = None,
+) -> str:
     try:
         tomllib.loads(text)
         badge = '<div class="file-status-badge validation-badge status-valid valid">Valid TOML</div>'
@@ -1256,7 +1844,9 @@ def _render_toml_document(text: str, pygments_style: str) -> str:
             '<div class="file-status-badge validation-badge status-invalid invalid">'
             f"Invalid TOML: {err_msg}</div>"
         )
-    code_html = _highlight_code(text, "toml", pygments_style)
+    code_html = _highlight_code(
+        text, "toml", pygments_style, with_line_anchors=True, changed_lines=changed_lines
+    )
     return f"{badge}\n{code_html}"
 
 
@@ -1290,32 +1880,274 @@ def _render_diff_document(text: str) -> str:
 
 
 def _render_text_document(text: str, changed_lines: set[int] | None) -> str:
-    if not changed_lines:
-        return f'<pre class="plain-text-view">{html.escape(text)}</pre>'
+    changed = changed_lines or set()
+    lines = _normalize_newlines(text).splitlines()
     parts: list[str] = ['<div class="plain-text-view">']
-    for idx, line in enumerate(_normalize_newlines(text).splitlines(), start=1):
-        changed_attr = ' data-changed="true"' if idx in changed_lines else ""
-        parts.append(f'<div class="plain-text-line"{changed_attr}>{html.escape(line) or " "}</div>')
+    for idx, line in enumerate(lines, start=1):
+        changed_attr = ' data-changed="true"' if idx in changed else ""
+        parts.append(
+            f'<div id="L{idx}" data-line="{idx}" class="plain-text-line mdv-code-line"{changed_attr}>'
+            f'{html.escape(line) or " "}</div>'
+        )
     parts.append("</div>")
     return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
-# Public Rendering Entrypoints
+# Agentic Artifact Classification Strip
 # ---------------------------------------------------------------------------
+_ENV_DISPLAY_NAMES: dict[str, str] = {
+    "claude": "Claude",
+    "codex": "Codex",
+    "gemini": "Gemini",
+    "agents": "Agents",
+    "cursor": "Cursor",
+    "opencode": "OpenCode",
+    "grok": "Grok",
+    "project": "Project",
+}
+
+_KIND_DISPLAY_NAMES: dict[str, str] = {
+    "skill": "Skill",
+    "agent": "Agent",
+    "rule": "Rule",
+    "command": "Command",
+    "reference": "Reference",
+    "prompt": "Prompt",
+    "memory": "Memory",
+    "config": "Config",
+}
+
+
+def _safe_sibling_href(raw_path: str) -> str | None:
+    """Convert a local sibling path or file URI into a safe href compatible with Markveil."""
+    cleaned = raw_path.strip()
+    if not cleaned:
+        return None
+    parsed = urlparse(cleaned)
+    scheme = parsed.scheme.lower()
+    if scheme == "file":
+        return cleaned
+    if scheme != "":
+        # Reject javascript:, data:, vbscript:, http:, etc. in local sibling links.
+        return None
+    if cleaned.startswith("//") or cleaned.startswith("\\\\"):
+        return None
+    if cleaned.startswith("/"):
+        return f"file://{quote(cleaned, safe='/')}"
+    return quote(cleaned.replace("\\", "/"), safe="/._-~#")
+
+
+def _render_agentic_strip_html(agentic_meta: dict | None) -> str:
+    """Render a palette-faithful, HTML-escaped Agentic Classification Strip."""
+    if not agentic_meta or not isinstance(agentic_meta, dict):
+        return ""
+
+    pills: list[str] = []
+    env_raw = str(agentic_meta.get("env_source") or "").strip()
+    if env_raw:
+        env_label = _ENV_DISPLAY_NAMES.get(env_raw.lower(), env_raw.title())
+        pills.append(
+            f'<span class="mdv-agentic-pill mdv-agentic-pill-env">'
+            f"{html.escape(env_label, quote=True)}</span>"
+        )
+
+    kind_raw = str(agentic_meta.get("kind") or "").strip()
+    if kind_raw:
+        kind_label = _KIND_DISPLAY_NAMES.get(kind_raw.lower(), kind_raw.title())
+        pills.append(
+            f'<span class="mdv-agentic-pill mdv-agentic-pill-kind">'
+            f"{html.escape(kind_label, quote=True)}</span>"
+        )
+
+    scope_raw = str(agentic_meta.get("scope") or "").strip()
+    if scope_raw:
+        scope_label = scope_raw.title()
+        pills.append(
+            f'<span class="mdv-agentic-pill mdv-agentic-pill-scope">'
+            f"{html.escape(scope_label, quote=True)}</span>"
+        )
+
+    if agentic_meta.get("always_apply"):
+        pills.append('<span class="mdv-agentic-pill mdv-agentic-pill-flag">Always Apply</span>')
+
+    stats: list[str] = []
+    rel_path = str(agentic_meta.get("rel_path") or "").strip()
+    if rel_path:
+        stats.append(f"<span>{html.escape(rel_path, quote=True)}</span>")
+
+    tok_est = agentic_meta.get("token_estimate")
+    if isinstance(tok_est, int) and not isinstance(tok_est, bool) and tok_est > 0:
+        stats.append(f"<span>~{tok_est:,} tok</span>")
+
+    name = str(agentic_meta.get("name") or "").strip()
+    desc = str(agentic_meta.get("description") or "").strip()
+
+    triggers_raw = agentic_meta.get("triggers") or ()
+    if isinstance(triggers_raw, str):
+        triggers = [triggers_raw.strip()] if triggers_raw.strip() else []
+    else:
+        triggers = [str(t).strip() for t in triggers_raw if str(t).strip()]
+
+    globs_raw = agentic_meta.get("globs") or ()
+    if isinstance(globs_raw, str):
+        globs = [globs_raw.strip()] if globs_raw.strip() else []
+    else:
+        globs = [str(g).strip() for g in globs_raw if str(g).strip()]
+
+    links_raw = agentic_meta.get("sibling_links") or ()
+    link_tags: list[str] = []
+    for item in links_raw:
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            label, target_path = str(item[0]).strip(), str(item[1]).strip()
+        elif isinstance(item, dict):
+            label = str(item.get("label") or "").strip()
+            target_path = str(item.get("path") or "").strip()
+        else:
+            continue
+        if not label or not target_path:
+            continue
+        href = _safe_sibling_href(target_path)
+        if not href:
+            continue
+        link_tags.append(
+            f'<a class="mdv-agentic-link" href="{html.escape(href, quote=True)}">'
+            f"{html.escape(label, quote=True)}</a>"
+        )
+
+    if not (pills or stats or name or desc or triggers or globs or link_tags):
+        return ""
+
+    parts: list[str] = [
+        '<section class="mdv-agentic-strip" aria-label="Agentic artifact classification">'
+    ]
+    if pills or stats:
+        parts.append('<div class="mdv-agentic-header">')
+        parts.append(f'<div class="mdv-agentic-pills">{"".join(pills)}</div>')
+        if stats:
+            parts.append(f'<div class="mdv-agentic-stats">{"".join(stats)}</div>')
+        parts.append("</div>")
+
+    if name or desc or triggers or globs:
+        parts.append('<div class="mdv-agentic-meta">')
+        if name or desc:
+            name_html = (
+                f'<span class="mdv-agentic-name">{html.escape(name, quote=True)}</span>'
+                if name
+                else ""
+            )
+            desc_html = (
+                f'<span class="mdv-agentic-desc">{html.escape(desc, quote=True)}</span>'
+                if desc
+                else ""
+            )
+            parts.append(f"<div>{name_html}{desc_html}</div>")
+        if triggers:
+            chips = "".join(
+                f'<span class="mdv-agentic-tag">{html.escape(t, quote=True)}</span>'
+                for t in triggers[:12]
+            )
+            parts.append(
+                '<div class="mdv-agentic-tags">'
+                '<span class="mdv-agentic-tag-label">Triggers:</span>'
+                f"{chips}</div>"
+            )
+        if globs:
+            chips = "".join(
+                f'<span class="mdv-agentic-tag">{html.escape(g, quote=True)}</span>'
+                for g in globs[:12]
+            )
+            parts.append(
+                '<div class="mdv-agentic-tags">'
+                '<span class="mdv-agentic-tag-label">Globs:</span>'
+                f"{chips}</div>"
+            )
+        parts.append("</div>")
+
+    if link_tags:
+        parts.append(
+            '<div class="mdv-agentic-links">'
+            '<span class="mdv-agentic-links-label">Related:</span>'
+            f'{"".join(link_tags[:16])}</div>'
+        )
+
+    parts.append("</section>")
+    raw_strip = "".join(parts)
+    # Run through sanitizer to guarantee allowlist compliance by construction.
+    sanitized_strip, _ = sanitize_html(raw_strip, allow_remote_images=False)
+    return sanitized_strip + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Public Rendering Entrypoints & Cached Markdown Converter
+# ---------------------------------------------------------------------------
+_TABLE_WRAP_RE = re.compile(r"(<table>[\s\S]*?</table>)")
+_CLOSING_STYLE_RE = re.compile(r"</style", re.IGNORECASE)
+_CLOSING_SCRIPT_RE = re.compile(r"</script", re.IGNORECASE)
+_MD_THREAD_LOCAL = threading.local()
+
+
+def _get_markdown_converter(
+    pygments_style: str,
+    hard_breaks: bool,
+) -> tuple[markdown.Markdown, TaskListExtension]:
+    cache: dict[tuple[str, bool], tuple[markdown.Markdown, TaskListExtension]] | None = getattr(
+        _MD_THREAD_LOCAL, "converters", None
+    )
+    if cache is None:
+        cache = {}
+        _MD_THREAD_LOCAL.converters = cache
+
+    key = (pygments_style, hard_breaks)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    task_ext = TaskListExtension()
+    extensions: list[str | Extension] = [
+        "markdown.extensions.fenced_code",
+        "markdown.extensions.tables",
+        _FastTocExtension(permalink=False),
+        "markdown.extensions.sane_lists",
+        "markdown.extensions.codehilite",
+        "markdown.extensions.admonition",
+        "markdown.extensions.def_list",
+        "markdown.extensions.footnotes",
+        StrikethroughExtension(),
+        task_ext,
+        BareUrlExtension(),
+    ]
+    if hard_breaks:
+        extensions.append("markdown.extensions.nl2br")
+
+    extension_configs = {
+        "markdown.extensions.codehilite": {
+            "css_class": "highlight",
+            "guess_lang": False,
+            "pygments_style": pygments_style,
+            "pygments_formatter": CustomHtmlFormatter,
+        },
+    }
+    md = markdown.Markdown(
+        extensions=extensions,
+        extension_configs=extension_configs,
+    )
+    cached = (md, task_ext)
+    cache[key] = cached
+    return cached
+
+
 def _unwrap_block_placeholders(html_body: str, token_prefix: str) -> str:
     pattern = re.compile(
-        rf"<p>\s*({re.escape(token_prefix)}(?:MERMAID|MATHBLOCK)\d+X)\s*</p>"
+        rf"<p>\s*({re.escape(token_prefix)}(?:MERMAID|MATHBLOCK|CODEBLOCK)\d+X)\s*</p>"
     )
     return pattern.sub(r"\1", html_body)
 
 
 def _wrap_tables(html_body: str) -> str:
-    return re.sub(
-        r"(<table>[\s\S]*?</table>)",
-        r'<div class="table-wrapper">\1</div>',
-        html_body,
-    )
+    if "<table" not in html_body:
+        return html_body
+    return _TABLE_WRAP_RE.sub(r'<div class="table-wrapper">\1</div>', html_body)
 
 
 def _build_csp(nonce: str, allow_remote_images: bool) -> str:
@@ -1336,7 +2168,9 @@ def _build_csp(nonce: str, allow_remote_images: bool) -> str:
 def _build_vendor_asset_tags(nonce: str) -> str:
     tags: list[str] = []
     if KATEX_CSS_PATH.is_file():
-        tags.append(f'<link rel="stylesheet" href="{html.escape(_path_to_uri(KATEX_CSS_PATH), quote=True)}">')
+        tags.append(
+            f'<link rel="stylesheet" href="{html.escape(_path_to_uri(KATEX_CSS_PATH), quote=True)}">'
+        )
     for js_path in (KATEX_JS_PATH, KATEX_AUTO_PATH, MERMAID_JS_PATH):
         if js_path.is_file():
             uri = html.escape(_path_to_uri(js_path), quote=True)
@@ -1360,6 +2194,7 @@ def render_document(
     initial_scroll_ratio: float = 0.0,
     initial_section: str | None = None,
     follow_changed: bool = False,
+    agentic_meta: dict | None = None,
 ) -> RenderResult:
     """Render Markdown or technical file content into a CSP-hardened HTML5 document."""
     resolved_theme, resolved_dark = _resolve_theme_and_dark(theme, dark)
@@ -1374,7 +2209,7 @@ def render_document(
         initial_section=initial_section,
         follow_changed=follow_changed,
     )
-    pygments_css = HtmlFormatter(style=pygments_style).get_style_defs(".highlight")
+    pygments_css = _get_pygments_css(pygments_style)
 
     kind = file_kind or detect_file_kind(file_path)
     nonce = secrets.token_urlsafe(16)
@@ -1391,68 +2226,55 @@ def render_document(
     elif kind == "markdown":
         meta, body, line_offset = parse_front_matter_with_offset(text)
         front_matter = meta
-        headings = extract_headings(text)
-        task_source_lines = _scan_task_source_lines(body, line_offset)
-        ctx = _preprocess_code_first(body, line_offset=line_offset, changed_lines=changed_lines)
-
-        extensions: list[str | Extension] = [
-            "markdown.extensions.fenced_code",
-            "markdown.extensions.tables",
-            "markdown.extensions.toc",
-            "markdown.extensions.sane_lists",
-            "markdown.extensions.codehilite",
-            "markdown.extensions.admonition",
-            "markdown.extensions.def_list",
-            "markdown.extensions.footnotes",
-            StrikethroughExtension(),
-            TaskListExtension(source_lines=task_source_lines),
-            BareUrlExtension(),
-        ]
-        if hard_breaks:
-            extensions.append("markdown.extensions.nl2br")
-
-        extension_configs = {
-            "markdown.extensions.codehilite": {
-                "css_class": "highlight",
-                "guess_lang": True,
-                "pygments_style": pygments_style,
-                "pygments_formatter": CustomHtmlFormatter,
-            },
-            "markdown.extensions.toc": {
-                "permalink": False,
-            },
-        }
-
-        raw_md_html = markdown.markdown(
-            ctx.text,
-            extensions=extensions,
-            extension_configs=extension_configs,
+        headings, task_source_lines = _scan_body_metadata(body, line_offset)
+        ctx = _preprocess_code_first(
+            body,
+            line_offset=line_offset,
+            changed_lines=changed_lines,
+            pygments_style=pygments_style,
         )
-        raw_md_html = _unwrap_block_placeholders(raw_md_html, ctx.token_prefix)
 
-        # Sanitize Markdown HTML BEFORE restoring trusted escaped Mermaid/KaTeX/front-matter.
+        md, task_ext = _get_markdown_converter(pygments_style, hard_breaks)
+        task_ext.set_source_lines(task_source_lines)
+        try:
+            md.reset()
+            raw_md_html = md.convert(ctx.text)
+        finally:
+            task_ext.set_source_lines([])
+
+        if ctx.placeholders:
+            raw_md_html = _unwrap_block_placeholders(raw_md_html, ctx.token_prefix)
+
+        # Sanitize Markdown HTML BEFORE restoring trusted escaped Mermaid/KaTeX/Code/front-matter.
         sanitized_html, blocked_remote_images = sanitize_html(
             raw_md_html,
             allow_remote_images=allow_remote_images,
         )
         sanitized_html = _wrap_tables(sanitized_html)
 
-        for tok, markup in ctx.placeholders.items():
-            sanitized_html = sanitized_html.replace(tok, markup)
+        if ctx.placeholders:
+            ph_re = re.compile(
+                rf"{re.escape(ctx.token_prefix)}(?:MERMAID|MATHBLOCK|MATHINLINE|CODEBLOCK)\d+X"
+            )
+            sanitized_html = ph_re.sub(
+                lambda m: ctx.placeholders.get(m.group(0), m.group(0)),
+                sanitized_html,
+            )
 
         covered_lines: set[int] = set()
-        for tok, (start_ln, end_ln) in ctx.block_line_ranges.items():
-            if tok in ctx.placeholders:
-                covered_lines.update(range(start_ln, end_ln + 1))
+        if changed_lines:
+            for tok, (start_ln, end_ln) in ctx.block_line_ranges.items():
+                if tok in ctx.placeholders:
+                    covered_lines.update(range(start_ln, end_ln + 1))
 
-        sanitized_html = _mark_changed_elements(
-            sanitized_html,
-            headings=headings,
-            changed_lines=changed_lines,
-            body_text=body,
-            line_offset=line_offset,
-            already_covered_lines=covered_lines,
-        )
+            sanitized_html = _mark_changed_elements(
+                sanitized_html,
+                headings=headings,
+                changed_lines=changed_lines,
+                body_text=body,
+                line_offset=line_offset,
+                already_covered_lines=covered_lines,
+            )
 
         fm_html = render_front_matter_html(front_matter)
         if fm_html and changed_lines and line_offset > 0:
@@ -1465,21 +2287,32 @@ def render_document(
 
         body_markup = f"{fm_html}{sanitized_html}"
     elif kind in ("json", "jsonc"):
-        body_markup = _render_json_document(text, kind, pygments_style)
+        body_markup = _render_json_document(text, kind, pygments_style, changed_lines=changed_lines)
     elif kind == "yaml":
-        body_markup = _render_yaml_document(text, pygments_style)
+        body_markup = _render_yaml_document(text, pygments_style, changed_lines=changed_lines)
     elif kind == "toml":
-        body_markup = _render_toml_document(text, pygments_style)
+        body_markup = _render_toml_document(text, pygments_style, changed_lines=changed_lines)
     elif kind == "diff":
         body_markup = _render_diff_document(text)
     elif kind == "mermaid":
         changed = bool(changed_lines)
         body_markup = _make_mermaid_container(text, changed=changed)
+    elif kind == "code":
+        body_markup = _render_code_document(
+            text, file_path, pygments_style, changed_lines=changed_lines
+        )
     else:
         body_markup = _render_text_document(text, changed_lines)
 
-    safe_custom_css = re.sub(r"</style", r"<\/style", custom_css, flags=re.IGNORECASE)
-    safe_client_js = re.sub(r"</script", r"<\/script", client_js, flags=re.IGNORECASE)
+    if agentic_meta and body_html_override is None:
+        strip_html = _render_agentic_strip_html(agentic_meta)
+        if strip_html:
+            body_markup = f"{strip_html}{body_markup}"
+
+    safe_custom_css = (
+        _CLOSING_STYLE_RE.sub(r"<\/style", custom_css) if custom_css else ""
+    )
+    safe_client_js = _CLOSING_SCRIPT_RE.sub(r"<\/script", client_js)
 
     csp = _build_csp(nonce, allow_remote_images=allow_remote_images)
     assets_html = _build_vendor_asset_tags(nonce)
