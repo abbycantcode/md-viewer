@@ -1,11 +1,15 @@
-"""Review comments data model and Markdown export helpers."""
+"""Review comments data model, Markdown export, and sidecar round-trip loading."""
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+_FEEDBACK_LABEL_RE = re.compile(r"^(?:\*\*)?Feedback:(?:\*\*)?[ \t]*(.*)$", re.IGNORECASE)
+_SECTION_HEADING_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
 
 @dataclass
@@ -25,9 +29,19 @@ class ReviewSession:
 
     def __init__(self, comments: list[ReviewComment] | None = None) -> None:
         self._comments: list[ReviewComment] = list(comments) if comments else []
+        self._has_unexported_changes: bool = False
 
     def __len__(self) -> int:
         return len(self._comments)
+
+    @property
+    def has_unexported_changes(self) -> bool:
+        """True when comments have been added, edited, or deleted since last export/load."""
+        return self._has_unexported_changes
+
+    def mark_exported(self) -> None:
+        """Mark the current review session state as exported/saved."""
+        self._has_unexported_changes = False
 
     def add(
         self,
@@ -46,6 +60,7 @@ class ReviewSession:
             line=line,
         )
         self._comments.append(comment)
+        self._has_unexported_changes = True
         return comment
 
     def update(
@@ -58,12 +73,24 @@ class ReviewSession:
         """Update an existing review comment by ID; return None if not found."""
         for comment in self._comments:
             if comment.id == comment_id:
+                changed = False
                 if feedback is not None:
-                    comment.feedback = feedback.strip()
+                    new_feedback = feedback.strip()
+                    if new_feedback != comment.feedback:
+                        comment.feedback = new_feedback
+                        changed = True
                 if heading is not None:
-                    comment.heading = heading.strip() or "Document"
+                    new_heading = heading.strip() or "Document"
+                    if new_heading != comment.heading:
+                        comment.heading = new_heading
+                        changed = True
                 if quote is not None:
-                    comment.quote = quote.strip()
+                    new_quote = quote.strip()
+                    if new_quote != comment.quote:
+                        comment.quote = new_quote
+                        changed = True
+                if changed:
+                    self._has_unexported_changes = True
                 return comment
         return None
 
@@ -72,16 +99,25 @@ class ReviewSession:
         for idx, comment in enumerate(self._comments):
             if comment.id == comment_id:
                 del self._comments[idx]
+                self._has_unexported_changes = True
                 return True
         return False
 
     def clear(self) -> None:
-        """Remove all review comments."""
+        """Remove all review comments and reset unexported change tracking."""
         self._comments.clear()
+        self._has_unexported_changes = False
 
     def list(self) -> list[ReviewComment]:
         """Return a shallow copy of all comments in insertion order."""
         return list(self._comments)
+
+    def load_from_sidecar(self, review_path: str | Path) -> int:
+        """Replace session comments with those parsed from a *.review.md sidecar file."""
+        loaded = load_review_markdown(review_path)
+        self._comments = list(loaded)
+        self._has_unexported_changes = False
+        return len(self._comments)
 
 
 def _format_blockquote(quote: str) -> str:
@@ -120,3 +156,110 @@ def default_review_path(source_path: str | None) -> str:
     p = Path(source_path)
     stem = p.stem or p.name
     return str(p.with_name(f"{stem}.review.md"))
+
+
+def find_sidecar_review_path(doc_path: str | Path | None) -> Path | None:
+    """Return the existing companion *.review.md sidecar path for doc_path, if present."""
+    if not doc_path:
+        return None
+    doc = Path(doc_path).expanduser()
+    if doc.name.lower().endswith(".review.md"):
+        return None
+    candidate = Path(default_review_path(str(doc)))
+    try:
+        if candidate.is_file():
+            return candidate
+    except OSError:
+        return None
+    return None
+
+
+def _parse_comment_block(heading: str, block_lines: list[str], created_at: str) -> ReviewComment | None:
+    quote_lines: list[str] = []
+    feedback_lines: list[str] = []
+    in_feedback = False
+    saw_quote = False
+
+    for line in block_lines:
+        if not in_feedback:
+            fb_match = _FEEDBACK_LABEL_RE.match(line.strip())
+            if fb_match:
+                in_feedback = True
+                inline_text = fb_match.group(1).strip()
+                if inline_text:
+                    feedback_lines.append(inline_text)
+                continue
+
+            stripped = line.lstrip()
+            if stripped.startswith(">"):
+                saw_quote = True
+                after = stripped[1:]
+                if after.startswith(" "):
+                    after = after[1:]
+                quote_lines.append(after)
+                continue
+
+            # Tolerate non-blank prose lines before an explicit Feedback: marker
+            if stripped:
+                if saw_quote:
+                    in_feedback = True
+                    feedback_lines.append(line)
+                else:
+                    feedback_lines.append(line)
+        else:
+            feedback_lines.append(line)
+
+    quote = "\n".join(quote_lines).strip()
+    feedback = "\n".join(feedback_lines).strip()
+    if not quote and not feedback:
+        return None
+
+    return ReviewComment(
+        id=uuid.uuid4().hex[:8],
+        heading=heading.strip() or "Document",
+        quote=quote,
+        feedback=feedback,
+        created_at=created_at,
+        line=None,
+    )
+
+
+def load_review_markdown(
+    review_path: str | Path,
+    target_path: str | Path | None = None,
+) -> list[ReviewComment]:
+    """Parse Markveil's *.review.md sidecar format back into ReviewComment objects."""
+    _ = target_path  # Reserved for optional target association / caller parity.
+    path = Path(review_path).expanduser()
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+        mtime = path.stat().st_mtime
+        created_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(timespec="seconds")
+    except OSError:
+        return []
+
+    if not raw_text.strip() or "_No review comments._" in raw_text:
+        return []
+
+    comments: list[ReviewComment] = []
+    current_heading: str | None = None
+    current_lines: list[str] = []
+
+    for line in raw_text.splitlines():
+        hm = _SECTION_HEADING_RE.match(line)
+        if hm:
+            if current_heading is not None:
+                parsed = _parse_comment_block(current_heading, current_lines, created_at)
+                if parsed is not None:
+                    comments.append(parsed)
+            current_heading = hm.group(1).strip()
+            current_lines = []
+        elif current_heading is not None:
+            current_lines.append(line)
+
+    if current_heading is not None:
+        parsed = _parse_comment_block(current_heading, current_lines, created_at)
+        if parsed is not None:
+            comments.append(parsed)
+
+    return comments

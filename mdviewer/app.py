@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
@@ -15,6 +16,7 @@ gi.require_version("GtkSource", "300")
 
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+from mdviewer import clipboard as _clipboard_mod  # noqa: E402
 from mdviewer.cli import LaunchOptions  # noqa: E402
 from mdviewer.clipboard import read_clipboard_smart, write_clipboard_text  # noqa: E402
 from mdviewer.config import (  # noqa: E402
@@ -34,8 +36,9 @@ from mdviewer.dialogs import (  # noqa: E402
 from mdviewer.diff_engine import diff_files, diff_git_head  # noqa: E402
 from mdviewer.gtk_styles import build_gtk_css  # noqa: E402
 from mdviewer.markdown_engine import HeadingItem  # noqa: E402
+from mdviewer.review_comments import ReviewComment  # noqa: E402
 from mdviewer.sidebar import DocumentSidebar  # noqa: E402
-from mdviewer.tab import DocumentTab  # noqa: E402
+from mdviewer.tab import DocumentTab, _record_clipboard_history  # noqa: E402
 from mdviewer.themes import (  # noqa: E402
     THEMES,
     THEME_ORDER,
@@ -43,6 +46,7 @@ from mdviewer.themes import (  # noqa: E402
 )
 
 _VIEW_MODE_CYCLE = ("preview", "split", "edit")
+_CONFIG_SAVE_DEBOUNCE_MS = 300
 
 
 def _detect_system_dark() -> bool:
@@ -134,6 +138,13 @@ class MarkdownViewerApp(Gtk.Application):
         self._css_provider: Gtk.CssProvider | None = None
         self._suppress_ui_signals: bool = False
         self._status_toast_timer: int = 0
+        self._config_save_timer: int = 0
+        self._config_dirty: bool = False
+        self._clipboard_flushed: bool = False
+        self._pending_clipboard_tab: DocumentTab | None = None
+        self._pending_clipboard_attempts: int = 0
+        self._pending_clipboard_timer: int = 0
+        self._pending_clipboard_focus_hid: int = 0
         self._tab_labels: dict[DocumentTab, list[tuple[Gtk.Label, Gtk.Label]]] = {}
         self._document_rows: dict[DocumentTab, Gtk.ListBoxRow] = {}
 
@@ -213,8 +224,12 @@ class MarkdownViewerApp(Gtk.Application):
         self.sidebar = DocumentSidebar(
             on_heading_clicked=self._on_sidebar_heading_clicked,
             on_section_clicked=self._on_sidebar_section_clicked,
+            on_add_comment=self.action_add_comment,
+            on_comment_clicked=self._on_sidebar_comment_clicked,
             on_edit_comment=self._on_sidebar_edit_comment,
             on_delete_comment=self._on_sidebar_delete_comment,
+            on_comments_exported=self._on_sidebar_comments_exported,
+            on_open_agentic_file=self.open_file,
             on_tab_changed=self._on_sidebar_tab_changed,
             on_status_message=self.show_status_toast,
         )
@@ -231,6 +246,7 @@ class MarkdownViewerApp(Gtk.Application):
             on_open_file=self.action_open_file,
             on_new_document=self.action_new_tab,
             on_open_clipboard=self.action_open_clipboard,
+            on_open_clipboard_entry=self._open_clipboard_history_entry,
             on_open_recent=self.open_file,
         )
         self._content_stack.add_named(self.welcome_view, "welcome")
@@ -358,7 +374,7 @@ class MarkdownViewerApp(Gtk.Application):
         box.set_margin_bottom(6)
         box.set_margin_start(6)
         box.set_margin_end(6)
-        box.set_size_request(230, -1)
+        box.set_size_request(240, -1)
 
         def add_item(label: str, callback: object) -> Gtk.ModelButton:
             btn = Gtk.ModelButton()
@@ -374,7 +390,7 @@ class MarkdownViewerApp(Gtk.Application):
             box.pack_start(sep, False, False, 0)
 
         add_item("New Tab   (Ctrl+N)", self.action_new_tab)
-        add_item("Open Clipboard", self.action_open_clipboard)
+        add_item("Open Clipboard   (Ctrl+Shift+V)", self.action_open_clipboard)
         self._menu_save_as = add_item("Save As…   (Ctrl+Shift+S)", self.action_save_as)
 
         add_sep()
@@ -392,6 +408,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._agent_btn = add_item("Ask local agent…   (Ctrl+Shift+A)", self.action_ask_agent)
         self._theme_btn = add_item("Cycle theme   (Ctrl+T)", self.cycle_theme)
         add_item("Compare / Visual Diff…   (Ctrl+D)", self.action_open_diff_picker)
+        add_item("Add Review Comment   (Ctrl+Shift+M)", self.action_add_comment)
         add_item("Export Review Comments…", self.action_export_reviews)
         add_item("Print / Export PDF…   (Ctrl+P)", self.action_print)
         add_item("Copy File Path   (Ctrl+Shift+C)", self.action_copy_file_path)
@@ -495,7 +512,7 @@ class MarkdownViewerApp(Gtk.Application):
         root.pack_end(bar, False, False, 0)
 
     # ------------------------------------------------------------------
-    # Launch Options Dispatch
+    # Launch Options Dispatch & Wayland Deferred Clipboard
     # ------------------------------------------------------------------
     def _process_launch_options(self) -> None:
         opts = self.launch_options
@@ -524,7 +541,7 @@ class MarkdownViewerApp(Gtk.Application):
             return
 
         if opts.clipboard:
-            self.action_open_clipboard()
+            self._start_deferred_clipboard_launch()
             return
 
         if opts.stdin_text is not None:
@@ -551,6 +568,76 @@ class MarkdownViewerApp(Gtk.Application):
             return
 
         self._content_stack.set_visible_child_name("welcome")
+
+    def _start_deferred_clipboard_launch(self) -> None:
+        """Open Clipboard Studio cleanly under Wayland by deferring read until focus/map."""
+        tab = self.open_text_tab(
+            text="",
+            display_name="Clipboard.md",
+            mode="preview",
+            clipboard_mode=True,
+            clipboard_was_html=False,
+        )
+        self._cancel_pending_clipboard()
+        self._pending_clipboard_tab = tab
+        self._pending_clipboard_attempts = 0
+
+        if self.window is not None:
+            self._pending_clipboard_focus_hid = self.window.connect(
+                "focus-in-event", self._on_startup_clipboard_focus
+            )
+        GLib.idle_add(self._attempt_startup_clipboard_read)
+
+    def _cancel_pending_clipboard(self) -> None:
+        if self._pending_clipboard_timer:
+            GLib.source_remove(self._pending_clipboard_timer)
+            self._pending_clipboard_timer = 0
+        if self._pending_clipboard_focus_hid and self.window is not None:
+            try:
+                self.window.disconnect(self._pending_clipboard_focus_hid)
+            except Exception:
+                pass
+        self._pending_clipboard_focus_hid = 0
+        self._pending_clipboard_tab = None
+
+    def _on_startup_clipboard_focus(
+        self, _win: Gtk.Window, _event: Gdk.EventFocus
+    ) -> bool:
+        GLib.idle_add(self._attempt_startup_clipboard_read)
+        return False
+
+    def _attempt_startup_clipboard_read(self) -> bool:
+        self._pending_clipboard_timer = 0
+        tab = self._pending_clipboard_tab
+        if tab is None or tab._cleaned_up:
+            self._cancel_pending_clipboard()
+            return False
+
+        # If user already typed or loaded content into the tab, stop retrying
+        if tab.get_text().strip():
+            self._cancel_pending_clipboard()
+            return False
+
+        self._pending_clipboard_attempts += 1
+        payload = read_clipboard_smart(prefer_html_convert=True)
+        if payload.text:
+            self._cancel_pending_clipboard()
+            tab.load_clipboard_payload(
+                payload.text, payload.was_html, record_history=True, mark_dirty=False
+            )
+            return False
+
+        # Under Wayland seat focus can arrive slightly after map; retry briefly.
+        if self._pending_clipboard_attempts < 4:
+            delay_ms = 90 * self._pending_clipboard_attempts
+            self._pending_clipboard_timer = GLib.timeout_add(
+                delay_ms, self._attempt_startup_clipboard_read
+            )
+            return False
+
+        self._cancel_pending_clipboard()
+        tab.show_empty_clipboard_prompt()
+        return False
 
     # ------------------------------------------------------------------
     # Tab Management
@@ -613,7 +700,8 @@ class MarkdownViewerApp(Gtk.Application):
         row.show_all()
         self.notebook.set_tab_reorderable(tab, True)
         tab.show_all()
-        tab.set_view_mode(tab.view_mode)
+        # Preserve single-render guarantee: sync pane visibility without re-rendering
+        tab.set_view_mode(tab.view_mode, rerender=False, notify=False)
         self.notebook.set_current_page(page_idx)
         self._content_stack.set_visible_child_name("tabs")
         self._update_notebook_tab_bar()
@@ -656,7 +744,7 @@ class MarkdownViewerApp(Gtk.Application):
                     if section:
                         existing.scroll_to_slug(section)
                     if line:
-                        existing.jump_to_line(line)
+                        existing.scroll_to_line(line)
                     if watch and not existing.watch_enabled:
                         existing.set_watch_enabled(True)
                     return existing
@@ -675,16 +763,16 @@ class MarkdownViewerApp(Gtk.Application):
             initial_line=line,
             initial_section=section,
             on_state_changed=self._on_tab_state_changed,
+            on_cursor_changed=self._on_tab_cursor_changed,
             on_open_file_request=self._on_tab_open_file_request,
             on_always_allow_remote=self._on_always_allow_remote,
             on_save_as_request=self._on_tab_save_as_request,
             on_comment_added=self._on_tab_comment_added,
             on_status_message=self.show_status_toast,
+            on_confirm_leave=self._confirm_leave_tab,
+            on_file_navigated=self._on_tab_file_navigated,
         )
-        add_recent_file(self.config, resolved)
-        self._save_config_safe()
-        if self.welcome_view is not None:
-            self.welcome_view.set_recent_files(self.config.recent_files)
+        self._record_recent_file(resolved)
         return self._add_tab(tab)
 
     def open_text_tab(
@@ -716,28 +804,65 @@ class MarkdownViewerApp(Gtk.Application):
             initial_line=line,
             initial_section=section,
             on_state_changed=self._on_tab_state_changed,
+            on_cursor_changed=self._on_tab_cursor_changed,
             on_open_file_request=self._on_tab_open_file_request,
             on_always_allow_remote=self._on_always_allow_remote,
             on_save_as_request=self._on_tab_save_as_request,
             on_comment_added=self._on_tab_comment_added,
             on_status_message=self.show_status_toast,
+            on_confirm_leave=self._confirm_leave_tab,
+            on_file_navigated=self._on_tab_file_navigated,
         )
         return self._add_tab(tab)
 
-    def close_tab(self, tab: DocumentTab, *, force: bool = False) -> bool:
-        if self.notebook is None:
-            return False
-        if not force and tab.dirty:
-            resp = self._confirm_unsaved_dialog(tab.display_name)
+    def _record_recent_file(self, resolved_path: str) -> None:
+        add_recent_file(self.config, resolved_path)
+        self._schedule_config_save()
+        if self.welcome_view is not None:
+            self.welcome_view.set_recent_files(self.config.recent_files)
+
+    def _confirm_leave_tab(self, tab: DocumentTab, *, closing: bool = False) -> bool:
+        """Confirm discarding/saving unsaved edits or unexported review comments."""
+        if tab.dirty:
+            resp = self._confirm_unsaved_dialog(tab.display_name, closing=closing)
             if resp == Gtk.ResponseType.CANCEL:
                 return False
             if resp == Gtk.ResponseType.YES:
                 if not self._save_tab(tab):
                     return False
 
+        if tab.has_unexported_comments():
+            resp = self._confirm_unexported_comments_dialog(
+                tab.display_name, closing=closing
+            )
+            if resp == Gtk.ResponseType.CANCEL:
+                return False
+            if resp == Gtk.ResponseType.YES:
+                if self.sidebar is None:
+                    return False
+                self.sidebar.update_comments(
+                    tab.review_session.list(),
+                    tab.current_file,
+                    has_active_document=True,
+                )
+                saved = self.sidebar.export_review_dialog(self.window)
+                if not saved:
+                    return False
+                tab.mark_comments_exported()
+        return True
+
+    def close_tab(self, tab: DocumentTab, *, force: bool = False) -> bool:
+        if self.notebook is None:
+            return False
+        if not force and (tab.dirty or tab.has_unexported_comments()):
+            if not self._confirm_leave_tab(tab, closing=True):
+                return False
+
         page_num = self.notebook.page_num(tab)
         if page_num < 0:
             return False
+        if tab is self._pending_clipboard_tab:
+            self._cancel_pending_clipboard()
         tab.cleanup()
         self._tab_labels.pop(tab, None)
         self.sidebar.documents.remove(self._document_rows.pop(tab))
@@ -751,21 +876,47 @@ class MarkdownViewerApp(Gtk.Application):
         self._sync_ui_for_active_tab()
         return True
 
-    def _confirm_unsaved_dialog(self, title: str) -> int:
+    def _confirm_unsaved_dialog(self, title: str, *, closing: bool = True) -> int:
+        verb = "closing" if closing else "navigating away"
         dlg = Gtk.MessageDialog(
             transient_for=self.window,
             modal=True,
             message_type=Gtk.MessageType.WARNING,
             buttons=Gtk.ButtonsType.NONE,
-            text=f"Save changes to “{title}” before closing?",
+            text=f"Save changes to “{title}” before {verb}?",
         )
+        dlg.get_style_context().add_class("markveil-window")
         dlg.format_secondary_text(
-            "Your unsaved edits will be lost if you close without saving."
+            "Your unsaved edits will be lost if you continue without saving."
         )
         dlg.add_button("Discard", Gtk.ResponseType.NO)
-        dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dlg.add_button("_Cancel", Gtk.ResponseType.CANCEL)
         save_btn = dlg.add_button("Save", Gtk.ResponseType.YES)
         save_btn.get_style_context().add_class("suggested-action")
+        dlg.set_default_response(Gtk.ResponseType.YES)
+        resp = dlg.run()
+        dlg.destroy()
+        return resp
+
+    def _confirm_unexported_comments_dialog(
+        self, title: str, *, closing: bool = True
+    ) -> int:
+        verb = "closing" if closing else "navigating away"
+        dlg = Gtk.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Export review comments for “{title}” before {verb}?",
+        )
+        dlg.get_style_context().add_class("markveil-window")
+        dlg.format_secondary_text(
+            "You have unexported review comments that will be lost if discarded."
+        )
+        dlg.add_button("Discard", Gtk.ResponseType.NO)
+        dlg.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        exp_btn = dlg.add_button("Export…", Gtk.ResponseType.YES)
+        exp_btn.get_style_context().add_class("suggested-action")
         dlg.set_default_response(Gtk.ResponseType.YES)
         resp = dlg.run()
         dlg.destroy()
@@ -774,24 +925,37 @@ class MarkdownViewerApp(Gtk.Application):
     # ------------------------------------------------------------------
     # Theme & Zoom
     # ------------------------------------------------------------------
+    @staticmethod
+    def _on_css_parsing_error(
+        _provider: Gtk.CssProvider, section: Gtk.CssSection, error: GLib.Error
+    ) -> None:
+        line = section.get_start_line() + 1 if section is not None else 0
+        print(
+            f"[markveil] GTK CSS parse warning (line {line}): {error.message}",
+            file=sys.stderr,
+        )
+
     def _apply_theme_css(self) -> None:
         css = build_gtk_css(self.resolved_theme, self.config.zoom_level)
         if self._css_provider is None:
             self._css_provider = Gtk.CssProvider()
+            self._css_provider.connect("parsing-error", self._on_css_parsing_error)
             screen = Gdk.Screen.get_default()
             if screen is not None:
                 Gtk.StyleContext.add_provider_for_screen(
                     screen,
                     self._css_provider,
-                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+                    Gtk.STYLE_PROVIDER_PRIORITY_USER,
                 )
         try:
             self._css_provider.load_from_data(css.encode("utf-8"))
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[markveil] Failed to load GTK CSS: {exc}", file=sys.stderr)
 
         if hasattr(self, "_theme_btn"):
-            self._theme_btn.set_label(f"Cycle theme  ·  {THEMES[self.resolved_theme].name}   (Ctrl+T)")
+            self._theme_btn.set_label(
+                f"Cycle theme  ·  {THEMES[self.resolved_theme].name}   (Ctrl+T)"
+            )
 
     def set_theme(self, theme_id: str) -> None:
         self.config.theme = theme_id
@@ -799,7 +963,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._apply_theme_css()
         for tab in self.get_all_tabs():
             tab.apply_theme(self.resolved_theme, rerender=True)
-        self._save_config_safe()
+        self._schedule_config_save()
 
     def cycle_theme(self) -> None:
         try:
@@ -817,7 +981,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._apply_theme_css()
         for tab in self.get_all_tabs():
             tab.set_zoom_level(clamped)
-        self._save_config_safe()
+        self._schedule_config_save()
 
     def adjust_zoom(self, delta: float) -> None:
         self.set_zoom(self.config.zoom_level + delta)
@@ -831,6 +995,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._update_notebook_tab_bar()
         self._search_btn.set_sensitive(has_tab)
         self._agent_btn.set_sensitive(has_tab and not self.quick_mode)
+        self._menu_save_as.set_sensitive(has_tab and not tab.readonly)
 
         if self.quick_mode:
             self._sidebar_btn.hide()
@@ -875,6 +1040,13 @@ class MarkdownViewerApp(Gtk.Application):
         else:
             self._statusbar.hide()
 
+    def _sync_cursor_label(self, tab: DocumentTab | None) -> None:
+        if tab is not None and tab.view_mode in ("edit", "split") and not tab.diff_active:
+            self._cursor_lbl.set_text(f"Ln {tab.cursor_line}, Col {tab.cursor_col}")
+            self._cursor_lbl.show()
+        else:
+            self._cursor_lbl.set_text("")
+
     def _sync_ui_for_active_tab(self) -> None:
         tab = self.get_active_tab()
         self._suppress_ui_signals = True
@@ -891,7 +1063,9 @@ class MarkdownViewerApp(Gtk.Application):
                 if self.sidebar is not None:
                     self.sidebar.update_outline([], None)
                     self.sidebar.update_context(None)
-                    self.sidebar.update_comments([], None)
+                    self.sidebar.update_comments(
+                        [], None, has_active_document=False
+                    )
                 return
 
             # HeaderBar title & subtitle
@@ -931,11 +1105,7 @@ class MarkdownViewerApp(Gtk.Application):
             self._watch_btn.set_sensitive(bool(tab.current_file))
 
             # StatusBar metrics
-            if tab.view_mode in ("edit", "split") and not tab.diff_active:
-                self._cursor_lbl.set_text(f"Ln {tab.cursor_line}, Col {tab.cursor_col}")
-                self._cursor_lbl.show()
-            else:
-                self._cursor_lbl.set_text("")
+            self._sync_cursor_label(tab)
 
             report = tab.context_report
             if report is not None:
@@ -967,8 +1137,11 @@ class MarkdownViewerApp(Gtk.Application):
                 self.sidebar.set_active_heading(tab.active_heading_slug)
                 self.sidebar.update_context(tab.context_report)
                 self.sidebar.update_comments(
-                    tab.review_session.list(), tab.current_file
+                    tab.review_session.list(),
+                    tab.current_file,
+                    has_active_document=True,
                 )
+                self.sidebar.set_project_context(tab.current_file)
         finally:
             self._suppress_ui_signals = False
 
@@ -1010,6 +1183,8 @@ class MarkdownViewerApp(Gtk.Application):
             "*.mdown",
             "*.mkd",
             "*.mdx",
+            "*.mdc",
+            "*.rules",
             "*.json",
             "*.jsonc",
             "*.yaml",
@@ -1020,6 +1195,11 @@ class MarkdownViewerApp(Gtk.Application):
             "*.mmd",
             "*.mermaid",
             "*.txt",
+            "*.py",
+            "*.sh",
+            "*.js",
+            "*.ts",
+            "*.tsx",
         ):
             md_filter.add_pattern(pat)
         fc.add_filter(md_filter)
@@ -1042,12 +1222,32 @@ class MarkdownViewerApp(Gtk.Application):
 
     def action_open_clipboard(self) -> None:
         payload = read_clipboard_smart(prefer_html_convert=True)
+        if payload.text:
+            _record_clipboard_history(payload.text, was_html=payload.was_html)
+            self.open_text_tab(
+                text=payload.text,
+                display_name="Clipboard.md",
+                mode="preview",
+                clipboard_mode=True,
+                clipboard_was_html=payload.was_html,
+            )
+        else:
+            tab = self.open_text_tab(
+                text="",
+                display_name="Clipboard.md",
+                mode="split",
+                clipboard_mode=True,
+                clipboard_was_html=False,
+            )
+            tab.show_empty_clipboard_prompt()
+
+    def _open_clipboard_history_entry(self, text: str, was_html: bool) -> None:
         self.open_text_tab(
-            text=payload.text,
+            text=text,
             display_name="Clipboard.md",
-            mode="preview",
+            mode="preview" if text else "split",
             clipboard_mode=True,
-            clipboard_was_html=payload.was_html,
+            clipboard_was_html=was_html,
         )
 
     def _save_tab(self, tab: DocumentTab) -> bool:
@@ -1081,8 +1281,7 @@ class MarkdownViewerApp(Gtk.Application):
             if fname:
                 saved = tab.save(fname)
                 if saved:
-                    add_recent_file(self.config, fname)
-                    self._save_config_safe()
+                    self._record_recent_file(str(Path(fname).resolve()))
         fc.destroy()
         return saved
 
@@ -1093,7 +1292,7 @@ class MarkdownViewerApp(Gtk.Application):
 
     def action_save_as(self) -> None:
         tab = self.get_active_tab()
-        if tab is not None:
+        if tab is not None and not tab.readonly:
             self._save_tab_as(tab)
 
     def action_close_active_tab(self) -> None:
@@ -1133,7 +1332,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._sidebar_btn.set_active(self.config.sidebar_visible)
         self._suppress_ui_signals = False
         self._sync_chrome_visibility()
-        self._save_config_safe()
+        self._schedule_config_save()
 
     def action_open_search(self, replace: bool = False) -> None:
         tab = self.get_active_tab()
@@ -1145,6 +1344,13 @@ class MarkdownViewerApp(Gtk.Application):
         if tab is None:
             return
         tab.set_watch_enabled(not tab.watch_enabled)
+
+    def action_add_comment(self) -> None:
+        tab = self.get_active_tab()
+        if tab is None:
+            self.show_status_toast("Open a document first to add a review comment.")
+            return
+        tab.request_add_comment()
 
     def action_open_diff_picker(self) -> None:
         tab = self.get_active_tab()
@@ -1193,6 +1399,8 @@ class MarkdownViewerApp(Gtk.Application):
         tab.show_diff_report(_regen(mode), "files", mode=mode, regenerate_fn=_regen)
 
     def action_ask_agent(self) -> None:
+        if self.quick_mode:
+            return
         tab = self.get_active_tab()
         if tab is None:
             self.show_status_toast("Open a document first to ask a local agent.")
@@ -1206,7 +1414,13 @@ class MarkdownViewerApp(Gtk.Application):
             on_open_in_tab=lambda name, md: self.open_text_tab(
                 text=md, display_name=name, mode="preview"
             ),
+            on_agent_selected=self._on_preferred_agent_selected,
         )
+
+    def _on_preferred_agent_selected(self, backend_id: str) -> None:
+        if backend_id and backend_id != self.config.preferred_agent:
+            self.config.preferred_agent = backend_id
+            self._schedule_config_save()
 
     def action_export_reviews(self) -> None:
         tab = self.get_active_tab()
@@ -1225,8 +1439,12 @@ class MarkdownViewerApp(Gtk.Application):
     def action_copy_file_path(self) -> None:
         tab = self.get_active_tab()
         if tab and tab.current_file:
-            write_clipboard_text(tab.current_file)
-            self.show_status_toast(f"Copied path: {tab.current_file}")
+            ok = write_clipboard_text(tab.current_file)
+            self.show_status_toast(
+                f"Copied path: {tab.current_file}"
+                if ok
+                else "Failed to copy file path to clipboard"
+            )
         else:
             self.show_status_toast("Current tab has no file path yet.")
 
@@ -1234,7 +1452,9 @@ class MarkdownViewerApp(Gtk.Application):
         dlg = PreferencesDialog(self.window, self.config)
         if dlg.run() == Gtk.ResponseType.ACCEPT:
             vals = dlg.get_values()
+            prev_resolved = self.resolved_theme
             self.config.theme = str(vals["theme"])
+            self.config.preferred_agent = str(vals.get("preferred_agent", "auto"))
             self.config.vim_navigation = bool(vals["vim_navigation"])
             self.config.allow_remote_images = bool(vals["allow_remote_images"])
             self.config.status_bar_visible = bool(vals["status_bar_visible"])
@@ -1244,20 +1464,29 @@ class MarkdownViewerApp(Gtk.Application):
             self.resolved_theme = resolve_theme_id(
                 self.config.theme, system_dark=self.system_dark
             )
+            theme_changed = self.resolved_theme != prev_resolved
             self._apply_theme_css()
-            self._menu_status_bar_btn.set_active(self.config.status_bar_visible)
+
+            self._suppress_ui_signals = True
+            try:
+                self._menu_status_bar_btn.set_active(self.config.status_bar_visible)
+            finally:
+                self._suppress_ui_signals = False
+
             self._sync_chrome_visibility()
 
             for tab in self.get_all_tabs():
                 tab.apply_theme(self.resolved_theme, rerender=False)
-                tab.apply_preferences(
+                prefs_changed = tab.apply_preferences(
                     vim_enabled=self.config.vim_navigation,
                     allow_remote_images=self.config.allow_remote_images,
                     custom_css=self.custom_css,
+                    rerender=False,
                 )
-                tab.render_preview(initial_scroll_ratio=tab.scroll_ratio)
+                if theme_changed or prefs_changed:
+                    tab.rerender_active_view()
 
-            self._save_config_safe()
+            self._schedule_config_save()
         dlg.destroy()
 
     def action_shortcuts(self) -> None:
@@ -1282,7 +1511,7 @@ class MarkdownViewerApp(Gtk.Application):
             return
         self.config.sidebar_visible = btn.get_active()
         self._sync_chrome_visibility()
-        self._save_config_safe()
+        self._schedule_config_save()
 
     def _on_mode_switcher_changed(self, stack: Gtk.Stack, _pspec: object) -> None:
         if self._suppress_ui_signals:
@@ -1302,9 +1531,11 @@ class MarkdownViewerApp(Gtk.Application):
             tab.set_watch_enabled(btn.get_active())
 
     def _on_status_bar_menu_toggled(self, btn: Gtk.CheckButton) -> None:
+        if self._suppress_ui_signals:
+            return
         self.config.status_bar_visible = btn.get_active()
         self._sync_chrome_visibility()
-        self._save_config_safe()
+        self._schedule_config_save()
 
     def _on_notebook_switch_page(
         self, _nb: Gtk.Notebook, _page: Gtk.Widget, _page_num: int
@@ -1318,6 +1549,13 @@ class MarkdownViewerApp(Gtk.Application):
             self._sync_chrome_visibility()
             self._sync_ui_for_active_tab()
 
+    def _on_tab_cursor_changed(self, tab: DocumentTab) -> None:
+        if tab is self.get_active_tab():
+            self._sync_cursor_label(tab)
+
+    def _on_tab_file_navigated(self, resolved_path: str) -> None:
+        self._record_recent_file(resolved_path)
+
     def _on_tab_open_file_request(
         self, file_path: str, _new_tab: bool, section: str | None
     ) -> None:
@@ -1325,7 +1563,7 @@ class MarkdownViewerApp(Gtk.Application):
 
     def _on_always_allow_remote(self) -> None:
         self.config.allow_remote_images = True
-        self._save_config_safe()
+        self._schedule_config_save()
 
     def _on_tab_save_as_request(self, tab: DocumentTab) -> None:
         self._save_tab_as(tab)
@@ -1348,11 +1586,38 @@ class MarkdownViewerApp(Gtk.Application):
         tab = self.get_active_tab()
         if tab is None:
             return
-        tab.scroll_to_slug(section.title)
+        title = (section.title or "").strip()
+        if title == "(Preamble)" or section.line <= 1:
+            tab.scroll_to_top()
+            return
+
+        # Resolve to exact HeadingItem slug by line first, then text
+        matched: HeadingItem | None = None
+        for h in tab.headings:
+            if h.line == section.line:
+                matched = h
+                break
+        if matched is None:
+            needle = title.lower()
+            for h in tab.headings:
+                if h.text.strip().lower() == needle:
+                    matched = h
+                    break
+
+        if matched is not None:
+            tab.scroll_to_slug(matched.slug)
+        else:
+            tab.scroll_to_heading(title)
+
         if section.line > 0:
             tab.jump_to_line(section.line)
 
-    def _on_sidebar_edit_comment(self, comment) -> None:
+    def _on_sidebar_comment_clicked(self, comment: ReviewComment) -> None:
+        tab = self.get_active_tab()
+        if tab is not None:
+            tab.scroll_to_comment(comment)
+
+    def _on_sidebar_edit_comment(self, comment: ReviewComment) -> None:
         tab = self.get_active_tab()
         if tab is not None:
             tab.edit_review_comment(comment)
@@ -1362,22 +1627,34 @@ class MarkdownViewerApp(Gtk.Application):
         if tab is not None:
             tab.delete_review_comment(comment_id)
 
+    def _on_sidebar_comments_exported(self, _filepath: str) -> None:
+        tab = self.get_active_tab()
+        if tab is not None:
+            tab.mark_comments_exported()
+
     def _on_sidebar_tab_changed(self, tab_name: str) -> None:
-        self.config.sidebar_tab = tab_name
-        self._save_config_safe()
+        if tab_name != self.config.sidebar_tab:
+            self.config.sidebar_tab = tab_name
+            self._schedule_config_save()
 
     def _on_sidebar_width_changed(self, paned: Gtk.Paned, _pspec: object) -> None:
         pos = paned.get_position()
-        if 140 <= pos <= 700:
+        if 140 <= pos <= 700 and pos != self.config.sidebar_width:
             self.config.sidebar_width = pos
+            self._schedule_config_save()
 
     def _on_window_configure(
         self, win: Gtk.Window, _event: Gdk.EventConfigure
     ) -> bool:
         w, h = win.get_size()
-        if w >= 400 and h >= 300:
+        if (
+            w >= 400
+            and h >= 300
+            and (w != self.config.window_width or h != self.config.window_height)
+        ):
             self.config.window_width = w
             self.config.window_height = h
+            self._schedule_config_save()
         return False
 
     def _on_drag_data_received(
@@ -1413,18 +1690,57 @@ class MarkdownViewerApp(Gtk.Application):
         Gtk.Application.do_shutdown(self)
 
     def _cleanup_and_save(self) -> None:
+        self._cancel_pending_clipboard()
         if self._status_toast_timer:
             GLib.source_remove(self._status_toast_timer)
             self._status_toast_timer = 0
+        if self._config_save_timer:
+            GLib.source_remove(self._config_save_timer)
+            self._config_save_timer = 0
         for tab in list(self.get_all_tabs()):
             tab.cleanup()
+        if not self._clipboard_flushed:
+            self._clipboard_flushed = True
+            self._flush_clipboard_on_exit()
         self._save_config_safe()
+        self._config_dirty = False
+
+    @staticmethod
+    def _flush_clipboard_on_exit() -> None:
+        flush_fn = getattr(_clipboard_mod, "flush_clipboard", None)
+        if callable(flush_fn):
+            try:
+                flush_fn()
+                return
+            except Exception as exc:
+                print(f"[markveil] Failed to flush clipboard: {exc}", file=sys.stderr)
+                return
+        try:
+            display = Gdk.Display.get_default()
+            if display is not None:
+                Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).store()
+        except Exception as exc:
+            print(f"[markveil] Failed to store GTK clipboard: {exc}", file=sys.stderr)
+
+    def _schedule_config_save(self, delay_ms: int = _CONFIG_SAVE_DEBOUNCE_MS) -> None:
+        """Debounce disk writes so interactive toggles/resizes never stall on fsync."""
+        self._config_dirty = True
+        if self._config_save_timer:
+            GLib.source_remove(self._config_save_timer)
+        self._config_save_timer = GLib.timeout_add(delay_ms, self._flush_config_save)
+
+    def _flush_config_save(self) -> bool:
+        self._config_save_timer = 0
+        if self._config_dirty:
+            self._config_dirty = False
+            self._save_config_safe()
+        return False
 
     def _save_config_safe(self) -> None:
         try:
             save_config(self.config)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[markveil] Failed to save config: {exc}", file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Keyboard Shortcuts
@@ -1473,6 +1789,12 @@ class MarkdownViewerApp(Gtk.Application):
                 return True
             if key_lower == Gdk.KEY_c:
                 self.action_copy_file_path()
+                return True
+            if key_lower == Gdk.KEY_m:
+                self.action_add_comment()
+                return True
+            if key_lower == Gdk.KEY_v:
+                self.action_open_clipboard()
                 return True
             if keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
                 self.action_switch_tab(-1)

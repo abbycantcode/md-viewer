@@ -103,6 +103,7 @@ GLOBAL_ALLOWED_ATTRS: frozenset[str] = frozenset(
         "lang",
         "role",
         "data-lang",
+        "data-line",
         "data-changed",
         "data-source-line",
         "data-task-index",
@@ -162,6 +163,11 @@ def _classify_img_src(raw_url: str, allow_remote_images: bool) -> tuple[str, str
     if not cleaned:
         return ("drop", "")
 
+    # Normalize backslashes outside data: URIs so browser URL normalization cannot
+    # smuggle protocol-relative or remote paths (e.g. \\evil.com, /\evil.com, \foo.png).
+    if not cleaned.lower().startswith("data:"):
+        cleaned = cleaned.replace("\\", "/")
+
     parsed = urlparse(cleaned)
     scheme = parsed.scheme.lower()
 
@@ -193,13 +199,17 @@ def _is_allowed_attr(tag: str, attr_name: str) -> bool:
 
 
 def _format_attrs(attrs: list[tuple[str, str | None]]) -> str:
+    if not attrs:
+        return ""
     parts: list[str] = []
     for name, value in attrs:
         if value is None or (name in BOOLEAN_ATTRS and value == ""):
             parts.append(name)
         else:
-            parts.append(f'{name}="{html.escape(value, quote=True)}"')
-    return (" " + " ".join(parts)) if parts else ""
+            if "&" in value or "<" in value or ">" in value or '"' in value or "'" in value:
+                value = html.escape(value, quote=True)
+            parts.append(f'{name}="{value}"')
+    return " " + " ".join(parts)
 
 
 class _SanitizingHTMLParser(HTMLParser):
@@ -267,9 +277,13 @@ class _SanitizingHTMLParser(HTMLParser):
         if tag_l not in ALLOWED_TAGS or tag_l in VOID_TAGS:
             return
 
-        if tag_l in self._open_tags:
-            while self._open_tags:
-                popped = self._open_tags.pop()
+        open_tags = self._open_tags
+        if open_tags and open_tags[-1] == tag_l:
+            open_tags.pop()
+            self._out.append(f"</{tag_l}>")
+        elif tag_l in open_tags:
+            while open_tags:
+                popped = open_tags.pop()
                 self._out.append(f"</{popped}>")
                 if popped == tag_l:
                     break
@@ -277,7 +291,10 @@ class _SanitizingHTMLParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._strip_stack:
             return
-        self._out.append(html.escape(data, quote=False))
+        if "&" in data or "<" in data or ">" in data:
+            self._out.append(html.escape(data, quote=False))
+        else:
+            self._out.append(data)
 
     def handle_comment(self, data: str) -> None:
         # Strip HTML comments to prevent parser-differential or conditional comment attacks.
@@ -296,6 +313,8 @@ class _SanitizingHTMLParser(HTMLParser):
             return self._render_img_tag(attrs)
         if tag == "a":
             return self._render_a_tag(attrs)
+        if not attrs:
+            return f"<{tag}>"
 
         filtered: list[tuple[str, str | None]] = []
         seen_names: set[str] = set()

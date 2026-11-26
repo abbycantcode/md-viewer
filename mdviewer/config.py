@@ -145,7 +145,12 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     return _config_from_dict(data)
 
 
-def save_config(cfg: AppConfig, config_path: str | Path | None = None) -> Path:
+def save_config(
+    cfg: AppConfig,
+    config_path: str | Path | None = None,
+    *,
+    fsync: bool = False,
+) -> Path:
     """Atomically write configuration JSON to disk using NamedTemporaryFile + os.replace."""
     target = Path(config_path) if config_path is not None else get_config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +172,8 @@ def save_config(cfg: AppConfig, config_path: str | Path | None = None) -> Path:
             json.dump(payload, tmp, indent=2, sort_keys=False)
             tmp.write("\n")
             tmp.flush()
-            os.fsync(tmp.fileno())
+            if fsync:
+                os.fsync(tmp.fileno())
         os.replace(tmp_name, target)
     except Exception:
         if tmp_name and os.path.exists(tmp_name):
