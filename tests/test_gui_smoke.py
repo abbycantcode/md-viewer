@@ -1,9 +1,10 @@
-"""Real GTK3 + WebKit2 GUI smoke tests for Markveil."""
+"""Real GTK3 + WebKit2 GUI smoke and regression tests for Markveil."""
 
 from __future__ import annotations
 
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -12,10 +13,11 @@ import pytest
 try:
     import gi
 
+    gi.require_version("Gdk", "3.0")
     gi.require_version("Gtk", "3.0")
     gi.require_version("WebKit2", "4.1")
     gi.require_version("GtkSource", "300")
-    from gi.repository import GLib, Gtk
+    from gi.repository import Gdk, GLib, Gtk
 
     _GTK_AVAILABLE = bool(Gtk.init_check([])[0])
 except Exception:  # pragma: no cover
@@ -76,6 +78,40 @@ def _run_app_scenario(app, scenario: Callable[[object], None]) -> None:
 
     if errors:
         raise errors[0]
+
+
+def _relative_luminance(r: float, g: float, b: float) -> float:
+    def _lin(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def _blend_rgba(fg: Gdk.RGBA, bg: tuple[float, float, float]) -> tuple[float, float, float]:
+    a = max(0.0, min(1.0, float(fg.alpha)))
+    return (
+        fg.red * a + bg[0] * (1.0 - a),
+        fg.green * a + bg[1] * (1.0 - a),
+        fg.blue * a + bg[2] * (1.0 - a),
+    )
+
+
+def _contrast_ratio(
+    fg_rgb: tuple[float, float, float], bg_rgb: tuple[float, float, float]
+) -> float:
+    l1 = _relative_luminance(*fg_rgb)
+    l2 = _relative_luminance(*bg_rgb)
+    lighter, darker = (l1, l2) if l1 >= l2 else (l2, l1)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
+    cleaned = hex_color.lstrip("#")
+    return (
+        int(cleaned[0:2], 16) / 255.0,
+        int(cleaned[2:4], 16) / 255.0,
+        int(cleaned[4:6], 16) / 255.0,
+    )
 
 
 def _sample_markdown() -> str:
@@ -149,6 +185,8 @@ def test_gui_studio_full_lifecycle(
         assert tab.current_file == str(doc.resolve())
         assert tab.watch_enabled is True
         assert tab.dirty is False
+        # P1-2: Opening a tab must render exactly once (not 3x!)
+        assert tab.render_count == 1
 
         # Verify extracted headings & safe code fence rendering
         heading_texts = [h.text for h in tab.headings]
@@ -186,11 +224,11 @@ def test_gui_studio_full_lifecycle(
         _pump_events(0.05)
         assert tab.is_search_open() is False
 
-        # Sidebar toggle & tab cycling
+        # Sidebar toggle & tab cycling (all 4 tabs including Agentic Env)
         assert a.sidebar is not None
         a.action_toggle_sidebar()
         _pump_events(0.05)
-        for stab in ("outline", "context", "comments"):
+        for stab in ("outline", "context", "comments", "env"):
             a.sidebar.set_active_tab(stab)
             _pump_events(0.04)
             assert a.sidebar.get_active_tab() == stab
@@ -228,7 +266,7 @@ def test_gui_studio_full_lifecycle(
 def test_gui_multi_tab_and_readonly_quick_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Verify multi-tab notebook visibility, readonly enforcement, and --quick chrome hiding."""
+    """Verify multi-tab notebook visibility, readonly enforcement, Save As sync, and quick mode."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     file_a = tmp_path / "a.md"
@@ -247,10 +285,13 @@ def test_gui_multi_tab_and_readonly_quick_mode(
         assert a.notebook.get_n_pages() == 1
         assert not a.notebook.get_show_tabs()
         assert a.quick_mode is True
+        assert a._menu_save_as.get_sensitive() is False
+        assert a._agent_btn.get_sensitive() is False
 
         tab_a = a.get_active_tab()
         assert tab_a is not None
         assert tab_a.readonly is True
+        assert tab_a.render_count == 1
         tab_a.set_view_mode("edit")
         assert tab_a.view_mode == "preview"
 
@@ -258,6 +299,7 @@ def test_gui_multi_tab_and_readonly_quick_mode(
         tab_b = a.open_file(str(file_b), readonly=True)
         _pump_events(0.1)
         assert tab_b is not None
+        assert tab_b.render_count == 1
         assert a.notebook.get_n_pages() == 2
         assert a.notebook.get_show_tabs() is True
 
@@ -282,8 +324,12 @@ def test_folio_document_navigation(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     def verify(a: MarkdownViewerApp) -> None:
         first = a.get_active_tab()
         assert a.resolved_theme == "folio"
+        assert first.render_count == 1
         assert first.source_buffer.get_style_scheme().get_id() == "markveil-folio"
+        assert a._menu_save_as.get_sensitive() is True
+
         draft = a.open_text_tab(text="# Draft", display_name="notes.md", mode="edit")
+        assert draft.render_count == 1
         rail = a.sidebar.documents
         assert rail.get_selected_row().document is draft
         assert not a.notebook.get_show_tabs()
@@ -311,6 +357,283 @@ def test_folio_document_navigation(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         assert not a._statusbar.get_visible()
 
     _run_app_scenario(app, verify)
+
+
+def test_dark_user_css_override_contrast_all_themes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P0-1: Hostile dark PRIORITY_USER gtk.css must never create invisible sidebar buttons."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    hostile_css = b"""
+    button { background-color: #111827; color: #ffffff; }
+    button:disabled, button:disabled label { color: rgba(255, 255, 255, 0.5); }
+    button:checked { background-color: #38bdf8; color: #ffffff; }
+    row:selected, row:selected label { background-color: #0f172a; color: #ffffff; }
+    """
+    screen = Gdk.Screen.get_default()
+    assert screen is not None
+    hostile_provider = Gtk.CssProvider()
+    hostile_provider.load_from_data(hostile_css)
+    Gtk.StyleContext.add_provider_for_screen(
+        screen, hostile_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+    )
+
+    doc = tmp_path / "contrast.md"
+    doc.write_text("# Contrast Test\n\nBody text.\n", encoding="utf-8")
+
+    from mdviewer.app import MarkdownViewerApp
+    from mdviewer.cli import LaunchOptions
+    from mdviewer.themes import THEMES, THEME_ORDER
+
+    app = MarkdownViewerApp(LaunchOptions(files=[str(doc)]))
+
+    def _verify(a: MarkdownViewerApp) -> None:
+        assert a.sidebar is not None
+        a.sidebar.set_active_tab("comments")
+        _pump_events(0.08)
+
+        export_btn = a.sidebar._export_review_btn
+        copy_btn = a.sidebar._copy_review_btn
+        add_btn = a.sidebar._add_comment_btn
+
+        for theme_id in THEME_ORDER:
+            a.set_theme(theme_id)
+            _pump_events(0.08)
+            spec = THEMES[theme_id]
+            surface_rgb = _hex_to_rgb(spec.surface)
+            bg_rgb = _hex_to_rgb(spec.bg)
+            accent_rgb = _hex_to_rgb(spec.accent)
+
+            # Disabled state for Export… and Copy (no comments yet)
+            assert export_btn.get_sensitive() is False
+            assert copy_btn.get_sensitive() is False
+            for btn in (export_btn, copy_btn):
+                lbl = btn.get_child()
+                assert lbl is not None
+                fg = lbl.get_style_context().get_color(Gtk.StateFlags.INSENSITIVE)
+                fg_rgb = _blend_rgba(fg, surface_rgb)
+                ratio = _contrast_ratio(fg_rgb, surface_rgb)
+                assert ratio >= 3.0, (
+                    f"{theme_id} disabled {btn.get_label()!r} contrast {ratio:.2f} < 3.0"
+                )
+
+            # Enabled state for Export… and Copy
+            export_btn.set_sensitive(True)
+            copy_btn.set_sensitive(True)
+            _pump_events(0.04)
+            for btn in (export_btn, copy_btn):
+                lbl = btn.get_child()
+                assert lbl is not None
+                fg = lbl.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+                fg_rgb = _blend_rgba(fg, bg_rgb)
+                ratio = _contrast_ratio(fg_rgb, bg_rgb)
+                assert ratio >= 4.5, (
+                    f"{theme_id} enabled {btn.get_label()!r} contrast {ratio:.2f} < 4.5"
+                )
+            export_btn.set_sensitive(False)
+            copy_btn.set_sensitive(False)
+
+            # Primary "+ Add" button contrast on accent background
+            add_lbl = add_btn.get_child()
+            assert add_lbl is not None
+            add_fg = add_lbl.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+            add_ratio = _contrast_ratio(_blend_rgba(add_fg, accent_rgb), accent_rgb)
+            assert add_ratio >= 4.5, (
+                f"{theme_id} '+ Add' button contrast {add_ratio:.2f} < 4.5"
+            )
+
+    try:
+        _run_app_scenario(app, _verify)
+    finally:
+        Gtk.StyleContext.remove_provider_for_screen(screen, hostile_provider)
+
+
+def test_comments_flow_dialog_validation_and_dirty_nav_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P0-2 & P0-5: Verify + Add button, CommentEditorDialog validation, and dirty navigate guard."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    doc_a = tmp_path / "doc_a.md"
+    doc_b = tmp_path / "doc_b.md"
+    doc_a.write_text("# Doc A\n\n## Details\n\nOriginal A.\n", encoding="utf-8")
+    doc_b.write_text("# Doc B\n\nTarget B.\n", encoding="utf-8")
+
+    from mdviewer.app import MarkdownViewerApp
+    from mdviewer.cli import LaunchOptions
+    from mdviewer.dialogs import CommentEditorDialog, PreferencesDialog
+
+    app = MarkdownViewerApp(LaunchOptions(files=[str(doc_a)]))
+
+    def _verify(a: MarkdownViewerApp) -> None:
+        tab = a.get_active_tab()
+        assert tab is not None
+        assert a.sidebar is not None
+
+        # Comments sidebar + Add button exists and is enabled for active doc
+        a.sidebar.set_active_tab("comments")
+        _pump_events(0.05)
+        assert a.sidebar._add_comment_btn.get_visible() is True
+        assert a.sidebar._add_comment_btn.get_sensitive() is True
+
+        # CommentEditorDialog validation: empty feedback disables Save, non-empty enables it
+        dlg = CommentEditorDialog(
+            a.window, heading="Details", quote="Original A.", initial_feedback=""
+        )
+        try:
+            assert dlg._save_btn is not None
+            assert dlg._save_btn.get_sensitive() is False
+            assert dlg._validation_lbl.get_visible() is True
+            dlg._heading_entry.set_text("Updated Details")
+            dlg._textview.get_buffer().set_text("Clarify edge case.")
+            _pump_events(0.04)
+            assert dlg._save_btn.get_sensitive() is True
+            assert dlg._validation_lbl.get_visible() is False
+            assert dlg.get_heading() == "Updated Details"
+            assert dlg.get_quote() == "Original A."
+            assert dlg.get_feedback() == "Clarify edge case."
+        finally:
+            dlg.destroy()
+
+        # PreferencesDialog includes preferred_agent
+        prefs = PreferencesDialog(a.window, a.config)
+        try:
+            vals = prefs.get_values()
+            assert "preferred_agent" in vals
+            assert vals["preferred_agent"] == "auto"
+        finally:
+            prefs.destroy()
+
+        # Add a comment and verify unexported tracking + sidebar updates
+        tab.review_session.add(
+            heading="Details", quote="Original A.", feedback="Tighten wording."
+        )
+        tab._local_comments_dirty = True
+        tab._notify_state_changed()
+        _pump_events(0.05)
+        assert tab.has_unexported_comments() is True
+        assert a.sidebar._export_review_btn.get_sensitive() is True
+        assert a.sidebar._copy_review_btn.get_sensitive() is True
+        assert a.sidebar._comments_count_label.get_text() == "1 comment"
+
+        # Dirty-navigation guard: if confirm returns False, edits & comments stay intact!
+        tab.source_buffer.insert_at_cursor("\nUnsaved edit")
+        assert tab.dirty is True
+        prompted = []
+
+        def _deny_leave(_t):
+            prompted.append(True)
+            return False
+
+        tab._on_confirm_leave = _deny_leave
+        nav_ok = tab.navigate_to_file(str(doc_b))
+        assert nav_ok is False
+        assert prompted == [True]
+        assert tab.current_file == str(doc_a.resolve())
+        assert "Unsaved edit" in tab.get_text()
+        assert len(tab.review_session) == 1
+
+        # When leave is confirmed, navigation succeeds, resets review_session, and updates recents
+        tab._on_confirm_leave = lambda _t: True
+        nav_ok = tab.navigate_to_file(str(doc_b))
+        assert nav_ok is True
+        assert tab.current_file == str(doc_b.resolve())
+        assert len(tab.review_session) == 0
+        assert str(doc_b.resolve()) in a.config.recent_files
+
+    _run_app_scenario(app, _verify)
+
+
+def test_agentic_env_sidebar_filtering_and_empty_clipboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1-1 & P0-3: Verify Agentic Env sidebar filtering + empty clipboard Split UX."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    skill_file = tmp_path / "SKILL.md"
+    rule_file = tmp_path / "AGENTS.md"
+    skill_file.write_text("# My Skill\n\nInstructions.\n", encoding="utf-8")
+    rule_file.write_text("# Project Rules\n\nConventions.\n", encoding="utf-8")
+
+    @dataclass(frozen=True)
+    class _StubArtifact:
+        path: str
+        rel_path: str
+        env_source: str
+        scope: str
+        kind: str
+        name: str
+        description: str
+
+    from mdviewer.app import MarkdownViewerApp
+    from mdviewer.cli import LaunchOptions
+    from mdviewer.clipboard import ClipboardPayload
+
+    monkeypatch.setattr(
+        "mdviewer.app.read_clipboard_smart",
+        lambda prefer_html_convert=True: ClipboardPayload(text="", was_html=False),
+    )
+
+    app = MarkdownViewerApp(LaunchOptions(files=[str(rule_file)]))
+
+    def _verify(a: MarkdownViewerApp) -> None:
+        assert a.sidebar is not None
+        a.sidebar.set_active_tab("env")
+        _pump_events(0.05)
+
+        a.sidebar.set_agentic_artifacts(
+            [
+                _StubArtifact(
+                    path=str(skill_file),
+                    rel_path="skills/demo/SKILL.md",
+                    env_source="claude",
+                    scope="global",
+                    kind="skill",
+                    name="demo-skill",
+                    description="Demo global skill",
+                ),
+                _StubArtifact(
+                    path=str(rule_file),
+                    rel_path="AGENTS.md",
+                    env_source="project",
+                    scope="project",
+                    kind="rule",
+                    name="AGENTS.md",
+                    description="Repo instructions",
+                ),
+            ]
+        )
+        _pump_events(0.05)
+        assert a.sidebar._env_count_label.get_text() == "2"
+
+        # Filter by scope: project
+        a.sidebar._env_scope_buttons["project"].set_active(True)
+        _pump_events(0.04)
+        assert a.sidebar._env_count_label.get_text() == "1"
+
+        # Reset scope to all and filter by search query
+        a.sidebar._env_scope_buttons["all"].set_active(True)
+        a.sidebar._env_search_entry.set_text("demo-skill")
+        _pump_events(0.04)
+        assert a.sidebar._env_count_label.get_text() == "1"
+
+        # Empty clipboard opens in Split mode with visible InfoBar prompt
+        a.action_open_clipboard()
+        _pump_events(0.06)
+        clip_tab = a.get_active_tab()
+        assert clip_tab is not None
+        assert clip_tab.clipboard_mode is True
+        assert clip_tab.view_mode == "split"
+        assert clip_tab._notice_infobar.get_visible() is True
+
+        # Loading clipboard payload hides notice and records history
+        clip_tab.load_clipboard_payload("# Captured\n\nFrom clipboard.", was_html=False)
+        _pump_events(0.05)
+        assert clip_tab._notice_infobar.get_visible() is False
+        assert "Captured" in clip_tab.get_text()
+
+    _run_app_scenario(app, _verify)
 
 
 def test_cold_gi_imports_require_gdk3() -> None:
