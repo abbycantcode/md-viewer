@@ -77,8 +77,14 @@ fi
 echo "[*] Installing desktop entries..."
 mkdir -p ~/.local/share/applications
 rm -f ~/.local/share/applications/md-viewer.desktop
-cp "$SCRIPT_DIR/markveil.desktop" ~/.local/share/applications/
-cp "$SCRIPT_DIR/md-viewer-clipboard.desktop" ~/.local/share/applications/
+sed \
+    -e "s|^Exec=markveil|Exec=$HOME/.local/bin/markveil|" \
+    -e "s|^TryExec=markveil|TryExec=$HOME/.local/bin/markveil|" \
+    "$SCRIPT_DIR/markveil.desktop" > ~/.local/share/applications/markveil.desktop
+sed \
+    -e "s|^Exec=md-viewer-clipboard|Exec=$HOME/.local/bin/md-viewer-clipboard|" \
+    -e "s|^TryExec=md-viewer-clipboard|TryExec=$HOME/.local/bin/md-viewer-clipboard|" \
+    "$SCRIPT_DIR/md-viewer-clipboard.desktop" > ~/.local/share/applications/md-viewer-clipboard.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database ~/.local/share/applications/ 2>/dev/null || true
 fi

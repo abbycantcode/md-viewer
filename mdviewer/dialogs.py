@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import gi
 
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
 
@@ -242,6 +244,7 @@ class AskAgentDialog(Gtk.Dialog):
             transient_for=parent,
             modal=False,
         )
+        self.get_style_context().add_class("markveil-window")
         self.set_default_size(760, 560)
         self._document_text = document_text
         self._file_path = file_path
@@ -510,6 +513,7 @@ class DiffPickerDialog(Gtk.Dialog):
             transient_for=parent,
             modal=True,
         )
+        self.get_style_context().add_class("markveil-window")
         self.add_buttons(
             Gtk.STOCK_CANCEL,
             Gtk.ResponseType.CANCEL,
@@ -626,6 +630,7 @@ class PreferencesDialog(Gtk.Dialog):
             transient_for=parent,
             modal=True,
         )
+        self.get_style_context().add_class("markveil-window")
         self.add_buttons(
             Gtk.STOCK_CANCEL,
             Gtk.ResponseType.CANCEL,
@@ -707,16 +712,12 @@ class PreferencesDialog(Gtk.Dialog):
         return lbl
 
     def _browse_css(self, _btn: Gtk.Button) -> None:
-        fc = Gtk.FileChooserDialog(
-            title="Select Custom CSS",
-            transient_for=self,
-            action=Gtk.FileChooserAction.OPEN,
-        )
-        fc.add_buttons(
-            Gtk.STOCK_CANCEL,
-            Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_OPEN,
-            Gtk.ResponseType.ACCEPT,
+        fc = Gtk.FileChooserNative.new(
+            "Select Custom CSS",
+            self,
+            Gtk.FileChooserAction.OPEN,
+            "_Open",
+            "_Cancel",
         )
         css_filter = Gtk.FileFilter()
         css_filter.set_name("CSS stylesheets (*.css)")
@@ -794,6 +795,7 @@ class ShortcutsDialog(Gtk.Dialog):
             transient_for=parent,
             modal=True,
         )
+        self.get_style_context().add_class("markveil-window")
         self.add_button("Close", Gtk.ResponseType.CLOSE)
         self.set_default_size(560, 520)
 
@@ -848,6 +850,7 @@ class CommentEditorDialog(Gtk.Dialog):
         title: str = "Add Review Comment",
     ) -> None:
         super().__init__(title=title, transient_for=parent, modal=True)
+        self.get_style_context().add_class("markveil-window")
         self.add_buttons(
             Gtk.STOCK_CANCEL,
             Gtk.ResponseType.CANCEL,

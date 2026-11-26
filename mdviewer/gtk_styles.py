@@ -1,8 +1,9 @@
 """GTK3 chrome styling, WebView background matching, and GtkSourceView schemes.
 
-Keeps GTK3 window chrome, HeaderBar, Notebook tabs, Sidebar, SearchBar,
-StatusBar, InfoBar, and GtkSourceView tightly harmonized with THEMES[theme_id]
-so opening files or switching themes produces zero white flash.
+All GTK3 rules are scoped strictly to `.markveil-window` and `.markveil-popover`
+so native system dialogs (FileChooser, Print, MessageDialog) keep pure OS styling
+with zero CSS leakage, while Markveil's own windows and dialogs match THEMES[theme_id]
+with zero white flash.
 """
 
 from __future__ import annotations
@@ -41,24 +42,24 @@ def get_gtksource_scheme_candidates(theme_id: str) -> tuple[str, ...]:
 
 
 def build_gtk_css(theme_id: str, zoom_level: float = 1.0) -> str:
-    """Build valid GTK3 CSS matched to THEMES[theme_id] and current editor zoom."""
+    """Build valid GTK3 CSS scoped strictly to Markveil windows and popovers."""
     t = THEMES[resolve_theme_id(theme_id)]
     clamped_zoom = max(0.5, min(3.0, float(zoom_level)))
     editor_pt = max(8, min(28, int(round(11 * clamped_zoom))))
 
     return f"""\
-/* Markveil GTK3 theme: {t.id} */
+/* Markveil GTK3 theme: {t.id} (strictly scoped to .markveil-window) */
 
-window,
-window.background,
-box.main-root,
-stack,
-paned {{
+window.markveil-window,
+window.markveil-window.background,
+.markveil-window box.main-root,
+.markveil-window stack,
+.markveil-window paned {{
     background-color: {t.bg};
     color: {t.text};
 }}
 
-paned > separator {{
+.markveil-window paned > separator {{
     min-width: 1px;
     min-height: 1px;
     background-color: {t.border};
@@ -66,8 +67,8 @@ paned > separator {{
 }}
 
 /* HeaderBar */
-headerbar,
-headerbar.main-headerbar {{
+.markveil-window headerbar,
+.markveil-window headerbar.main-headerbar {{
     min-height: 44px;
     padding: 0 8px;
     background-color: {t.surface};
@@ -77,25 +78,25 @@ headerbar.main-headerbar {{
     box-shadow: none;
 }}
 
-headerbar .title,
-headerbar.main-headerbar .title {{
+.markveil-window headerbar .title,
+.markveil-window headerbar.main-headerbar .title {{
     color: {t.heading};
     font-weight: 600;
 }}
 
-headerbar .subtitle,
-headerbar.main-headerbar .subtitle {{
+.markveil-window headerbar .subtitle,
+.markveil-window headerbar.main-headerbar .subtitle {{
     color: {t.muted};
     font-size: 0.82em;
 }}
 
-headerbar separator,
-headerbar.main-headerbar separator {{
+.markveil-window headerbar separator,
+.markveil-window headerbar.main-headerbar separator {{
     background-color: {t.border};
 }}
 
-headerbar button,
-headerbar.main-headerbar button {{
+.markveil-window headerbar button,
+.markveil-window headerbar.main-headerbar button {{
     background-color: transparent;
     background-image: none;
     color: {t.text};
@@ -108,23 +109,23 @@ headerbar.main-headerbar button {{
     transition: background-color 120ms ease, border-color 120ms ease;
 }}
 
-headerbar button:hover,
-headerbar.main-headerbar button:hover {{
+.markveil-window headerbar button:hover,
+.markveil-window headerbar.main-headerbar button:hover {{
     background-color: {t.surface_alt};
     border-color: {t.border};
 }}
 
-headerbar button:active,
-headerbar button:checked,
-headerbar.main-headerbar button:active,
-headerbar.main-headerbar button:checked {{
+.markveil-window headerbar button:active,
+.markveil-window headerbar button:checked,
+.markveil-window headerbar.main-headerbar button:active,
+.markveil-window headerbar.main-headerbar button:checked {{
     background-color: {t.bg};
     border-color: {t.border_strong};
     color: {t.heading};
 }}
 
-headerbar button.suggested-action,
-headerbar.main-headerbar button.suggested-action {{
+.markveil-window headerbar button.suggested-action,
+.markveil-window headerbar.main-headerbar button.suggested-action {{
     background-image: none;
     background-color: {t.accent};
     border-color: {t.accent};
@@ -132,43 +133,43 @@ headerbar.main-headerbar button.suggested-action {{
     font-weight: 600;
 }}
 
-headerbar button.suggested-action:hover,
-headerbar.main-headerbar button.suggested-action:hover {{
+.markveil-window headerbar button.suggested-action:hover,
+.markveil-window headerbar.main-headerbar button.suggested-action:hover {{
     background-color: {t.accent_hover};
     border-color: {t.accent_hover};
 }}
 
-headerbar .linked > button,
-headerbar.main-headerbar .linked > button {{
+.markveil-window headerbar .linked > button,
+.markveil-window headerbar.main-headerbar .linked > button {{
     border-color: {t.border};
     background-color: {t.bg};
 }}
 
-headerbar .linked > button:hover,
-headerbar.main-headerbar .linked > button:hover {{
+.markveil-window headerbar .linked > button:hover,
+.markveil-window headerbar.main-headerbar .linked > button:hover {{
     background-color: {t.surface_alt};
 }}
 
-stackswitcher.mode-switcher button {{
+.markveil-window stackswitcher.mode-switcher button {{
     border-radius: 5px;
     padding: 4px 11px;
     font-size: 0.88em;
     font-weight: 500;
 }}
 
-stackswitcher.mode-switcher button:checked {{
+.markveil-window stackswitcher.mode-switcher button:checked {{
     background-color: {t.surface_alt};
     border-color: {t.border_strong};
     color: {t.heading};
     font-weight: 600;
 }}
 
-.zoom-controls button {{
+.markveil-window .zoom-controls button {{
     padding: 3px 7px;
     font-size: 0.84em;
 }}
 
-.doc-stats-label {{
+.markveil-window .doc-stats-label {{
     font-size: 0.78em;
     color: {t.muted};
     background-color: {t.bg};
@@ -180,20 +181,20 @@ stackswitcher.mode-switcher button:checked {{
 }}
 
 /* Document Tabs (Notebook) */
-notebook,
-notebook > stack {{
+.markveil-window notebook,
+.markveil-window notebook > stack {{
     background-color: {t.bg};
     color: {t.text};
     border: none;
 }}
 
-notebook > header {{
+.markveil-window notebook > header {{
     background-color: {t.surface};
     border-bottom: 1px solid {t.border};
     padding: 0 4px;
 }}
 
-notebook > header tabs tab {{
+.markveil-window notebook > header tabs tab {{
     background-color: transparent;
     background-image: none;
     color: {t.muted};
@@ -204,12 +205,12 @@ notebook > header tabs tab {{
     box-shadow: none;
 }}
 
-notebook > header tabs tab:hover {{
+.markveil-window notebook > header tabs tab:hover {{
     color: {t.text};
     background-color: {t.surface_alt};
 }}
 
-notebook > header tabs tab:checked {{
+.markveil-window notebook > header tabs tab:checked {{
     background-color: {t.bg};
     color: {t.heading};
     border-left: 1px solid {t.border};
@@ -218,7 +219,7 @@ notebook > header tabs tab:checked {{
     font-weight: 600;
 }}
 
-notebook > header tabs tab button {{
+.markveil-window notebook > header tabs tab button {{
     padding: 1px 3px;
     min-width: 18px;
     min-height: 18px;
@@ -228,66 +229,66 @@ notebook > header tabs tab button {{
     color: {t.muted};
 }}
 
-notebook > header tabs tab button:hover {{
+.markveil-window notebook > header tabs tab button:hover {{
     background-color: {t.surface_alt};
     color: {t.text};
 }}
 
-/* Sidebar (Outline, Context Inspector, Review Comments, Ask Agent) */
-.sidebar,
-.mdv-sidebar {{
+/* Sidebar (Outline, Context Inspector, Review Comments) */
+.markveil-window .sidebar,
+.markveil-window .mdv-sidebar {{
     background-color: {t.surface};
     color: {t.text};
     border-right: 1px solid {t.border};
 }}
 
-.sidebar header,
-.mdv-sidebar .sidebar-header {{
+.markveil-window .sidebar header,
+.markveil-window .mdv-sidebar .sidebar-header {{
     background-color: {t.surface};
     border-bottom: 1px solid {t.border};
     padding: 6px 8px;
 }}
 
-.sidebar-section-title {{
+.markveil-window .sidebar-section-title {{
     color: {t.muted};
     font-size: 0.78em;
     font-weight: 600;
     letter-spacing: 0.04em;
 }}
 
-.sidebar list,
-.mdv-sidebar list,
-.sidebar treeview,
-.mdv-sidebar treeview {{
+.markveil-window .sidebar list,
+.markveil-window .mdv-sidebar list,
+.markveil-window .sidebar treeview,
+.markveil-window .mdv-sidebar treeview {{
     background-color: {t.surface};
     color: {t.text};
 }}
 
-.sidebar list row,
-.mdv-sidebar list row {{
+.markveil-window .sidebar list row,
+.markveil-window .mdv-sidebar list row {{
     padding: 5px 10px;
     border-radius: 4px;
     margin: 1px 4px;
     color: {t.text};
 }}
 
-.sidebar list row:hover,
-.mdv-sidebar list row:hover {{
+.markveil-window .sidebar list row:hover,
+.markveil-window .mdv-sidebar list row:hover {{
     background-color: {t.surface_alt};
 }}
 
-.sidebar list row:selected,
-.mdv-sidebar list row:selected,
-.sidebar list row.outline-row-active,
-.mdv-sidebar list row.outline-row-active {{
+.markveil-window .sidebar list row:selected,
+.markveil-window .mdv-sidebar list row:selected,
+.markveil-window .sidebar list row.outline-row-active,
+.markveil-window .mdv-sidebar list row.outline-row-active {{
     background-color: {t.bg};
     color: {t.accent};
     border-left: 2px solid {t.accent};
     font-weight: 600;
 }}
 
-.sidebar button,
-.mdv-sidebar button {{
+.markveil-window .sidebar button,
+.markveil-window .mdv-sidebar button {{
     background-color: {t.bg};
     background-image: none;
     color: {t.text};
@@ -297,22 +298,22 @@ notebook > header tabs tab button:hover {{
     padding: 4px 9px;
 }}
 
-.sidebar button:hover,
-.mdv-sidebar button:hover {{
+.markveil-window .sidebar button:hover,
+.markveil-window .mdv-sidebar button:hover {{
     background-color: {t.surface_alt};
     border-color: {t.border_strong};
 }}
 
-.sidebar button.suggested-action,
-.mdv-sidebar button.suggested-action {{
+.markveil-window .sidebar button.suggested-action,
+.markveil-window .mdv-sidebar button.suggested-action {{
     background-color: {t.accent};
     border-color: {t.accent};
     color: {t.accent_contrast};
     font-weight: 600;
 }}
 
-.review-comment-card,
-.context-metric-card {{
+.markveil-window .review-comment-card,
+.markveil-window .context-metric-card {{
     background-color: {t.bg};
     border: 1px solid {t.border};
     border-radius: 5px;
@@ -320,36 +321,36 @@ notebook > header tabs tab button:hover {{
     margin: 4px 6px;
 }}
 
-list.context-metric-card {{
+.markveil-window list.context-metric-card {{
     padding: 4px;
     margin: 0;
 }}
 
-list.context-metric-card row {{
+.markveil-window list.context-metric-card row {{
     padding: 4px 6px;
     border-radius: 4px;
     color: {t.text};
 }}
 
-list.context-metric-card row:hover {{
+.markveil-window list.context-metric-card row:hover {{
     background-color: {t.surface};
 }}
 
-.muted-label {{
+.markveil-window .muted-label {{
     color: {t.muted};
 }}
 
 /* SearchBar, WatchBar, DiffBar, ClipboardBar & Entries */
-searchbar,
-searchbar > revealer > box,
-.search-bar {{
+.markveil-window searchbar,
+.markveil-window searchbar > revealer > box,
+.markveil-window .search-bar {{
     background-color: {t.surface};
     border-bottom: 1px solid {t.border};
     padding: 5px 10px;
     color: {t.text};
 }}
 
-.search-bar button {{
+.markveil-window .search-bar button {{
     background-color: {t.bg};
     background-image: none;
     color: {t.text};
@@ -359,26 +360,26 @@ searchbar > revealer > box,
     padding: 3px 9px;
 }}
 
-.search-bar button:hover {{
+.markveil-window .search-bar button:hover {{
     background-color: {t.surface_alt};
     border-color: {t.border_strong};
 }}
 
-.search-bar button:checked {{
+.markveil-window .search-bar button:checked {{
     background-color: {t.surface_alt};
     border-color: {t.accent};
     color: {t.accent};
     font-weight: 600;
 }}
 
-.search-bar button.suggested-action {{
+.markveil-window .search-bar button.suggested-action {{
     background-color: {t.accent};
     border-color: {t.accent};
     color: {t.accent_contrast};
     font-weight: 600;
 }}
 
-entry {{
+.markveil-window entry {{
     background-color: {t.bg};
     background-image: none;
     color: {t.text};
@@ -389,24 +390,24 @@ entry {{
     box-shadow: none;
 }}
 
-entry:focus {{
+.markveil-window entry:focus {{
     border-color: {t.accent};
 }}
 
-entry selection {{
+.markveil-window entry selection {{
     background-color: {t.accent};
     color: {t.accent_contrast};
 }}
 
-.search-match-label {{
+.markveil-window .search-match-label {{
     color: {t.muted};
     font-size: 0.82em;
     padding: 0 6px;
 }}
 
-/* InfoBar (Remote images blocked, external change notice, git diff error) */
-infobar,
-infobar > revealer > box {{
+/* InfoBar */
+.markveil-window infobar,
+.markveil-window infobar > revealer > box {{
     background-color: {t.surface};
     background-image: none;
     color: {t.text};
@@ -415,25 +416,25 @@ infobar > revealer > box {{
     padding: 4px 10px;
 }}
 
-infobar.info > revealer > box {{
+.markveil-window infobar.info > revealer > box {{
     background-color: {t.note_bg};
     border-bottom-color: {t.border};
     color: {t.text};
 }}
 
-infobar.warning > revealer > box {{
+.markveil-window infobar.warning > revealer > box {{
     background-color: {t.warning_bg};
     border-bottom-color: {t.border};
     color: {t.text};
 }}
 
-infobar.error > revealer > box {{
+.markveil-window infobar.error > revealer > box {{
     background-color: {t.caution_bg};
     border-bottom-color: {t.border};
     color: {t.text};
 }}
 
-infobar button {{
+.markveil-window infobar button {{
     background-color: {t.bg};
     background-image: none;
     color: {t.text};
@@ -443,13 +444,13 @@ infobar button {{
     box-shadow: none;
 }}
 
-infobar button:hover {{
+.markveil-window infobar button:hover {{
     background-color: {t.surface_alt};
 }}
 
 /* StatusBar */
-.status-bar,
-.mdv-statusbar {{
+.markveil-window .status-bar,
+.markveil-window .mdv-statusbar {{
     background-color: {t.surface};
     color: {t.muted};
     border-top: 1px solid {t.border};
@@ -457,12 +458,12 @@ infobar button:hover {{
     font-size: 0.8em;
 }}
 
-.status-bar label,
-.mdv-statusbar label {{
+.markveil-window .status-bar label,
+.markveil-window .mdv-statusbar label {{
     color: {t.muted};
 }}
 
-.mdv-statusbar .doc-stats-label {{
+.markveil-window .mdv-statusbar .doc-stats-label {{
     background-color: transparent;
     border: none;
     padding: 0;
@@ -471,7 +472,7 @@ infobar button:hover {{
     color: {t.muted};
 }}
 
-.mdv-statusbar .zoom-controls button {{
+.markveil-window .mdv-statusbar .zoom-controls button {{
     background-color: transparent;
     background-image: none;
     border: 1px solid transparent;
@@ -481,13 +482,13 @@ infobar button:hover {{
     box-shadow: none;
 }}
 
-.mdv-statusbar .zoom-controls button:hover {{
+.markveil-window .mdv-statusbar .zoom-controls button:hover {{
     background-color: {t.surface_alt};
     border-color: {t.border};
     color: {t.text};
 }}
 
-.watch-badge {{
+.markveil-window .watch-badge {{
     color: {t.muted};
     background-color: {t.bg};
     border: 1px solid {t.border};
@@ -497,13 +498,13 @@ infobar button:hover {{
     font-weight: 600;
 }}
 
-.watch-badge.active {{
+.markveil-window .watch-badge.active {{
     color: {t.valid_fg};
     background-color: {t.valid_bg};
     border-color: {t.valid_border};
 }}
 
-.readonly-badge {{
+.markveil-window .readonly-badge {{
     color: {t.warning_fg};
     background-color: {t.warning_bg};
     border: 1px solid {t.border};
@@ -513,26 +514,26 @@ infobar button:hover {{
     font-weight: 600;
 }}
 
-/* Preview & Source Scrolled Containers — Zero White Flash */
-scrolledwindow,
-scrolledwindow viewport,
-scrolledwindow.preview-scrolled,
-scrolledwindow.preview-scrolled viewport,
-scrolledwindow.source-scrolled,
-scrolledwindow.source-scrolled viewport {{
+/* Preview & Source Scrolled Containers */
+.markveil-window scrolledwindow,
+.markveil-window scrolledwindow viewport,
+.markveil-window scrolledwindow.preview-scrolled,
+.markveil-window scrolledwindow.preview-scrolled viewport,
+.markveil-window scrolledwindow.source-scrolled,
+.markveil-window scrolledwindow.source-scrolled viewport {{
     background-color: {t.bg};
 }}
 
-/* General TextViews (e.g., CommentEditorDialog) & GtkSourceView Editor */
-textview,
-textview text {{
+/* TextViews & GtkSourceView Editor */
+.markveil-window textview,
+.markveil-window textview text {{
     background-color: {t.bg};
     color: {t.text};
     caret-color: {t.accent};
 }}
 
-textview.editor-source,
-textview.editor-source text {{
+.markveil-window textview.editor-source,
+.markveil-window textview.editor-source text {{
     background-color: {t.bg};
     color: {t.text};
     caret-color: {t.accent};
@@ -540,48 +541,45 @@ textview.editor-source text {{
     font-size: {editor_pt}pt;
 }}
 
-textview.editor-source border {{
+.markveil-window textview.editor-source border {{
     background-color: {t.surface};
     color: {t.muted};
 }}
 
-textview.editor-source text selection {{
+.markveil-window textview.editor-source text selection {{
     background-color: {t.accent};
     color: {t.accent_contrast};
 }}
 
-/* Popovers & Menus */
-popover,
-popover.background,
-menu {{
+/* Markveil App Popover */
+popover.markveil-popover,
+popover.markveil-popover.background {{
     background-color: {t.surface};
     color: {t.text};
     border: 1px solid {t.border_strong};
     border-radius: 6px;
 }}
 
-popover modelbutton,
-menu menuitem {{
+popover.markveil-popover modelbutton {{
     color: {t.text};
     padding: 5px 10px;
     border-radius: 4px;
 }}
 
-popover modelbutton:hover,
-menu menuitem:hover {{
+popover.markveil-popover modelbutton:hover {{
     background-color: {t.surface_alt};
     color: {t.heading};
 }}
 
 /* Progress / Token budget bars */
-progressbar trough {{
+.markveil-window progressbar trough {{
     background-color: {t.surface_alt};
     border: 1px solid {t.border};
     border-radius: 3px;
     min-height: 6px;
 }}
 
-progressbar progress {{
+.markveil-window progressbar progress {{
     background-color: {t.accent};
     border-radius: 3px;
     min-height: 6px;
