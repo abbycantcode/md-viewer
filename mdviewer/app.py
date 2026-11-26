@@ -77,7 +77,7 @@ class MarkdownViewerApp(Gtk.Application):
         self,
         launch_options: LaunchOptions | None = None,
         *,
-        application_id: str | None = "org.mdviewer.App",
+        application_id: str | None = "dev.abby.markveil",
     ) -> None:
         super().__init__(
             application_id=application_id,
@@ -118,10 +118,10 @@ class MarkdownViewerApp(Gtk.Application):
 
         self._build_window()
         self._apply_theme_css()
-        self._process_launch_options()
 
         assert self.window is not None
         self.window.show_all()
+        self._process_launch_options()
         self._sync_chrome_visibility()
         self._sync_ui_for_active_tab()
 
@@ -132,6 +132,22 @@ class MarkdownViewerApp(Gtk.Application):
         win = Gtk.ApplicationWindow(application=self)
         win.set_default_size(self.config.window_width, self.config.window_height)
         win.set_position(Gtk.WindowPosition.CENTER)
+        icon_candidates = (
+            Path(__file__).resolve().parent.parent / "assets" / "icons" / "markveil-128.png",
+            Path(__file__).resolve().parent.parent / "assets" / "icons" / "markveil.svg",
+        )
+        icon_loaded = False
+        for icon_path in icon_candidates:
+            if icon_path.is_file():
+                try:
+                    Gtk.Window.set_default_icon_from_file(str(icon_path))
+                    win.set_icon_from_file(str(icon_path))
+                    icon_loaded = True
+                    break
+                except Exception:
+                    continue
+        if not icon_loaded:
+            win.set_icon_name("markveil")
         win.connect("delete-event", self._on_window_delete)
         win.connect("key-press-event", self._on_key_press)
         win.connect("configure-event", self._on_window_configure)
@@ -203,7 +219,7 @@ class MarkdownViewerApp(Gtk.Application):
         hb = Gtk.HeaderBar()
         hb.set_show_close_button(True)
         hb.get_style_context().add_class("main-headerbar")
-        hb.set_title("md-viewer")
+        hb.set_title("Markveil")
         hb.set_subtitle("")
         self._headerbar = hb
 
@@ -818,7 +834,7 @@ class MarkdownViewerApp(Gtk.Application):
         self._suppress_ui_signals = True
         try:
             if tab is None:
-                self._headerbar.set_title("md-viewer")
+                self._headerbar.set_title("Markveil")
                 self._headerbar.set_subtitle("")
                 self._cursor_lbl.set_text("")
                 self._stats_lbl.set_text("")

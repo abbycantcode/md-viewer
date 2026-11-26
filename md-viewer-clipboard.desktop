@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
-Name=Markdown Quick Editor
+Name=Markveil Clipboard Studio
 GenericName=Clipboard Markdown Studio
-Comment=Open md-viewer with clipboard HTML-to-Markdown conversion
+Comment=Open Markveil with clipboard content for quick preview and editing
 Exec=md-viewer-clipboard
 TryExec=md-viewer-clipboard
-Icon=text-x-markdown
+Icon=markveil
 Terminal=false
 Categories=Utility;TextEditor;
 StartupNotify=true
 NoDisplay=true
-Keywords=markdown;clipboard;notepad;quick;editor;agent;watch;diff;katex;mermaid;
+Keywords=markdown;clipboard;notepad;quick;editor;markveil;

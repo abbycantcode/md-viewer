@@ -1,34 +1,62 @@
-# md-viewer
+<div align="center">
+  <img src="assets/icons/markveil.svg" width="96" height="96" alt="Markveil logo" />
+  <h1>Markveil</h1>
+  <p><strong>Native GTK3 + WebKit2 Markdown Studio for Linux and local coding-agent workflows.</strong></p>
+  <p>Offline KaTeX &amp; Mermaid · Agent Watch Mode · Context Token Inspector · Visual Diffs · Portable <code>*.review.md</code> Feedback</p>
+</div>
 
-Lightweight native GTK3 + WebKit2 Markdown Studio for Linux and local coding-agent workflows. Cold-starts in under 250ms, runs offline-first with bundled KaTeX and Mermaid, and requires zero Electron or Node runtimes.
+<p align="center">
+  <img src="docs/screenshots/hero-obsidian-studio.png" alt="Markveil Obsidian Studio with Watch Mode, Context Token Inspector, Mermaid diagram, and GFM rendering" width="100%" />
+</p>
 
-## Why md-viewer
+## Why Markveil
 
-Most Linux Markdown tools split into two camps: heavy Electron workspaces that burn hundreds of megabytes of RAM, or minimal viewers that break on Mermaid diagrams, math, diffs, and live agent edits. `md-viewer` (`mdv`) sits in the middle as a fast native desktop studio built for reading, editing, and reviewing AI-generated plans and technical files.
+Most Linux Markdown tools split into two camps: heavy Electron workspaces that burn hundreds of megabytes of RAM, or minimal viewers that break on Mermaid diagrams, math, diffs, and live agent edits. **Markveil** (`markveil`, short CLI `mdv`, legacy alias `md-viewer`) is a fast native desktop studio built for reading, editing, and reviewing AI-generated plans and technical files.
 
-| Capability | md-viewer (`mdv`) | Electron Apps (Obsidian / VS Code) | Terminal / Minimal Viewers |
+| Capability | Markveil (`mdv`) | Electron Apps (Obsidian / VS Code) | Terminal / Minimal Viewers |
 |---|---|---|---|
-| Cold start | <250 ms | 1.5 - 4 s | <50 ms |
-| Memory footprint | ~45 - 65 MB RSS | 300 - 900 MB RSS | ~15 - 30 MB |
-| Native GTK3 + WebKit2 | Yes | No (Chromium) | Terminal or basic widget |
+| Cold CLI startup | ~170 ms | 1.5 - 4 s | <50 ms |
+| Native GTK3 + WebKit2 | Yes (zero Electron/Node) | No (Chromium) | Terminal or basic widget |
 | Offline KaTeX + Mermaid | Bundled locally | Plugin or network dependent | Usually unsupported |
 | Agent Watch Mode + block diff highlight | Built-in (`-w`) | External extension | None |
+| Context & `SKILL.md` token inspector | Built-in | None | None |
 | Portable `*.review.md` export | Built-in | None | None |
 | Visual `--git-diff` & `--diff` | Built-in | Git extension | Text only |
 | Local CLI agent (`claude`/`codex`/`agy`) | Built-in (`Ctrl+Shift+A`) | Paid add-on or extension | None |
 
-Tradeoffs: `md-viewer` targets Linux desktops with GTK3 and WebKit2GTK 4.1. It has no cloud sync, vault graph, or third-party plugin marketplace.
+Tradeoffs: Markveil targets Linux desktops with GTK3 and WebKit2GTK 4.1. It has no cloud sync, vault graph, or third-party plugin marketplace.
+
+## Interface Showcase
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/split-paper-editor.png" alt="Split live preview and editor in Paper theme with Outline sidebar" width="100%" />
+      <p align="center"><strong>Split Live Studio (Paper)</strong> — <code>GtkSourceView</code> with debounced live preview, proportional scroll sync, multi-tab strip, and collapsible Outline TOC.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/visual-diff-review.png" alt="Side-by-side visual diff review in Obsidian theme" width="100%" />
+      <p align="center"><strong>Visual Diff Review</strong> — Compare against previous watched revisions, <code>git HEAD</code>, or another file with heading context and word-level inline highlights.</p>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="docs/screenshots/sepia-review-comments.png" alt="Sepia reading theme with anchored Review Comments sidebar" width="85%" />
+      <p align="center"><strong>Portable Review Comments (Sepia)</strong> — Select text in Preview, attach feedback, and export a clean <code>*.review.md</code> artifact for any coding agent.</p>
+    </td>
+  </tr>
+</table>
 
 ## Signature Workflows
 
 ### Agent Watch Mode
-Open a file with `mdv -w PLAN.md` or press `Ctrl+Shift+W`. When an external tool or coding agent rewrites the file on disk, `md-viewer` reloads automatically without modal confirmation popups and highlights changed blocks in place (`[data-changed="true"]`).
+Open a file with `mdv -w PLAN.md` or press `Ctrl+Shift+W`. When an external tool or coding agent rewrites the file on disk, Markveil reloads automatically via `Gio.FileMonitor` without modal confirmation popups and highlights changed blocks in place (`[data-changed="true"]`). Pause updates or enable **Follow changes** directly from the Watch bar.
 
 ### Context and `SKILL.md` Token Inspector
 Open the sidebar (`Ctrl+B` / `F9`) to inspect document word count, byte size, reading time, and heuristic token estimates split across prose (~4.2 chars/token) and fenced code (~3.4 chars/token). Each heading shows its token share, warns if a section exceeds 2,000 estimated tokens, and checks `SKILL.md` files for valid YAML frontmatter (`name` and `description`).
 
 ### Visual Diff Review
-Press `Ctrl+D` or launch from the terminal with `--git-diff` or `--diff` to inspect changes against the previous revision, `git HEAD`, or another file. Diffs include hunk counts, nearest Markdown heading context, and inline word-level insertions and deletions.
+Press `Ctrl+D` or launch from the terminal with `--git-diff` or `--diff` to inspect changes against the previous revision, `git HEAD`, or another file. Diffs include hunk counts, nearest Markdown heading context, and inline word-level insertions and deletions in Unified or Side-by-Side layout.
 
 ### Portable Review Comments (`*.review.md`)
 Select text in Preview and click **Add comment** to attach review feedback, then export a clean sidecar file (`<stem>.review.md`, headed `# Review: <filename>`). Any coding agent can read the quoted excerpt and `Feedback:` block directly without custom IDE integrations.
@@ -36,7 +64,7 @@ Select text in Preview and click **Add comment** to attach review feedback, then
 ### Ask Local Agent
 Press `Ctrl+Shift+A` to run a locally installed CLI agent (`claude`, `codex`, or `agy`) asynchronously against the active document (bounded to 32,000 chars) using built-in presets (`Summarize`, `Find Gaps`, `Check Architecture`, `Tighten Prose`) or a custom prompt.
 
-### Terminal-first `mdv` CLI and Stdin Piping
+### Terminal-first CLI and Stdin Piping
 Launch tabs, jump straight to `--line` or `--section`, open split/edit views, or pipe command output directly into a rendered tab with `... | mdv -`.
 
 ### Smart Clipboard Studio (`Super+Shift+M`)
@@ -60,16 +88,16 @@ bash setup.sh
 ```
 
 `setup.sh` performs the following steps:
-1. Marks `md-viewer`, `mdv`, `md-viewer-clipboard`, and `md_viewer.py` executable.
+1. Marks `markveil`, `mdv`, `md-viewer`, `md-viewer-clipboard`, and `md_viewer.py` executable.
 2. Creates `.venv` with `--system-site-packages` via `uv` and installs `markdown` and `pyyaml`.
-3. Verifies GTK3, WebKit2 4.1, GtkSource 300, Pygments, `mdviewer` imports, and bundled KaTeX + Mermaid assets.
-4. Symlinks `md-viewer`, `mdv`, and `md-viewer-clipboard` into `~/.local/bin/`.
-5. Installs `.desktop` entries into `~/.local/share/applications/` and sets `md-viewer` as default handler for `text/markdown` and `text/x-markdown` (without altering `.json` or `.txt` defaults).
+3. Verifies GTK3, WebKit2 4.1, GtkSource 300, Pygments, `mdviewer` imports, icons, and bundled KaTeX + Mermaid assets.
+4. Symlinks `markveil`, `mdv`, `md-viewer` (compatibility alias), and `md-viewer-clipboard` into `~/.local/bin/`.
+5. Installs Markveil SVG/PNG icons into `~/.local/share/icons/hicolor/`, installs `.desktop` entries into `~/.local/share/applications/`, and sets `markveil.desktop` as default handler for `text/markdown` and `text/x-markdown` (without altering `.json` or `.txt` defaults).
 6. Registers `Super+Shift+M` as a GNOME custom keybinding when `gsettings` is writable (and skips cleanly on KDE, Sway, Hyprland, XFCE, or headless environments).
 
-## `mdv` CLI Reference
+## CLI Reference
 
-`mdv` and `md-viewer` accept identical arguments.
+`markveil`, `mdv`, and `md-viewer` accept identical arguments.
 
 ```bash
 # Open one or more files in tabs
@@ -113,7 +141,7 @@ mdv --clipboard --theme obsidian
 | `--line N` | Jump to 1-based line `N` on open |
 | `--section NAME` | Jump to heading `NAME` on open |
 | `--theme NAME` | Override theme: `auto`, `paper`, `obsidian`, `sepia`, `nordic` |
-| `--version` | Print `md-viewer` version and exit |
+| `--version` | Print Markveil version and exit |
 
 ## Keyboard Shortcuts
 
@@ -162,7 +190,7 @@ mdv --clipboard --theme obsidian
 
 ## Security Architecture
 
-`md-viewer` renders untrusted Markdown files inside a locked-down local WebKit2 context:
+Markveil renders untrusted Markdown files inside a locked-down local WebKit2 context:
 
 1. **Per-render cryptographic CSP nonces**: Every render generates a fresh `secrets.token_urlsafe(16)` nonce. The document CSP sets `default-src 'none'`, `script-src 'nonce-<nonce>'`, `connect-src 'none'`, `media-src 'none'`, `object-src 'none'`, and `frame-src 'none'`.
 2. **HTML parser allowlist sanitization**: `mdviewer/sanitizer.py` parses rendered HTML with Python's `html.parser.HTMLParser` (never regex). It strips dangerous tags along with all inner content (`script`, `style`, `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`, `noscript`, `template`, `textarea`, `select`, `form`, `meta`, `base`, `link`, `svg`), removes all `on*` event attributes, `srcdoc`, `formaction`, and arbitrary inline `style` (allowing only `text-align` on `th`/`td`), restricts `<input>` to task checkboxes, and rejects `javascript:`, `vbscript:`, `data:text/html`, and `data:image/svg+xml` URLs.
@@ -172,7 +200,7 @@ mdv --clipboard --theme obsidian
 
 ## Agent Skill
 
-Coding agents (Claude Code, Codex, OpenCode, Antigravity) can load [`skills/md-viewer/SKILL.md`](skills/md-viewer/SKILL.md) to learn how to open plans in Watch Mode, launch `--git-diff` reviews, pipe terminal output to `mdv -`, and act on exported `*.review.md` feedback files.
+Coding agents (Claude Code, Codex, OpenCode, Antigravity) can load [`skills/markveil/SKILL.md`](skills/markveil/SKILL.md) to learn how to open plans in Watch Mode, launch `--git-diff` reviews, pipe terminal output to `mdv -`, and act on exported `*.review.md` feedback files.
 
 ## Dependencies
 

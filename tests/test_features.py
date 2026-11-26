@@ -19,10 +19,19 @@ from mdviewer import agent_cli, cli, clipboard, config, context_inspector, diff_
 # config.py tests
 # ---------------------------------------------------------------------------
 class TestConfig:
-    def test_xdg_config_path(self, monkeypatch, tmp_path):
+    def test_xdg_config_path_and_legacy_fallback(self, monkeypatch, tmp_path):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
         path = config.get_config_path()
-        assert path == tmp_path / "xdg" / "md-viewer" / "config.json"
+        assert path == tmp_path / "xdg" / "markveil" / "config.json"
+
+        legacy_path = config.get_legacy_config_path()
+        assert legacy_path == tmp_path / "xdg" / "md-viewer" / "config.json"
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text('{"theme": "nordic", "zoom_level": 1.4}\n', encoding="utf-8")
+
+        loaded = config.load_config()
+        assert loaded.theme == "nordic"
+        assert loaded.zoom_level == 1.4
 
     def test_atomic_save_and_load_roundtrip(self, monkeypatch, tmp_path):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))

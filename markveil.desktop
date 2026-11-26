@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Markveil
+GenericName=Markdown Studio
+Comment=Native Markdown studio for Linux and local coding-agent workflows
+Exec=markveil %F
+TryExec=markveil
+Icon=markveil
+Terminal=false
+Categories=Utility;TextEditor;Office;Viewer;
+MimeType=text/markdown;text/x-markdown;
+StartupNotify=true
+StartupWMClass=markveil
+Keywords=markdown;viewer;editor;markveil;md;preview;agent;watch;diff;katex;mermaid;

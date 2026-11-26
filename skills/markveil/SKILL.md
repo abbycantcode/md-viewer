@@ -1,14 +1,14 @@
 ---
-name: md-viewer
+name: markveil
 description: >-
-  Use when presenting generated Markdown plans, reports, or specs for human review in Watch Mode,
-  launching visual Git or file diffs, piping command output to mdv, or reading and acting on
-  exported *.review.md human feedback files.
+  Use when presenting generated Markdown plans, reports, or specs for human review in Watch Mode
+  (`markveil -w` / `mdv -w`), launching visual Git or file diffs, piping command output to
+  Markveil, or reading and acting on exported *.review.md human feedback files.
 ---
 
-# md-viewer (`mdv`) Workflow for Coding Agents
+# Markveil (`markveil` / `mdv`) Workflow for Coding Agents
 
-`mdv` (alias for `md-viewer`) is a native Linux Markdown studio for human-in-the-loop review. Use it to hand off plans, reports, diffs, and terminal output visually, and to ingest structured human review comments back into your workflow.
+Markveil is a native Linux Markdown studio for human-in-the-loop review. Use `markveil` (or the short alias `mdv`) to hand off plans, reports, diffs, and terminal output visually, and to ingest structured human review comments back into your workflow.
 
 ## 1. Open Plans and Reports in Watch Mode
 
@@ -41,7 +41,7 @@ mdv --git-diff docs/architecture.md >/dev/null 2>&1 &
 mdv --diff PLAN.v1.md PLAN.v2.md >/dev/null 2>&1 &
 ```
 
-`mdv` renders hunk headers with nearest-heading context, addition/deletion counts, and inline word-level diffs.
+Markveil renders hunk headers with nearest-heading context, addition/deletion counts, and inline word-level diffs.
 
 ## 3. Pipe Terminal Summaries and Logs
 
@@ -53,11 +53,11 @@ git log -n 20 --stat | mdv - >/dev/null 2>&1 &
 python3 scripts/summarize.py | mdv >/dev/null 2>&1 &
 ```
 
-Note: `mdv` launches a GUI window, so background (`&`) or detach when your shell session should continue immediately. Skip `mdv` in headless/SSH sessions without `DISPLAY` or `WAYLAND_DISPLAY`.
+Note: Markveil launches a GUI window, so background (`&`) or detach when your shell session should continue immediately. Skip `mdv` in headless/SSH sessions without `DISPLAY` or `WAYLAND_DISPLAY`.
 
 ## 4. Read and Act on `*.review.md` Feedback
 
-Humans can attach review comments to sections and quoted excerpts inside `md-viewer`, then export a portable sidecar file named `<stem>.review.md` (for example, `PLAN.review.md` next to `PLAN.md`).
+Humans can attach review comments to sections and quoted excerpts inside Markveil, then export a portable sidecar file named `<stem>.review.md` (for example, `PLAN.review.md` next to `PLAN.md`).
 
 Exported files follow this structure:
 

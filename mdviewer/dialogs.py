@@ -11,7 +11,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
 
-from gi.repository import Gdk, GLib, Gtk, Pango, WebKit2  # noqa: E402
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango, WebKit2  # noqa: E402
 
 from mdviewer.agent_cli import (  # noqa: E402
     PROMPT_PRESETS,
@@ -56,21 +56,38 @@ class WelcomeView(Gtk.ScrolledWindow):
         outer.set_margin_end(32)
         outer.set_size_request(540, -1)
 
-        # Header
+        # Header with Markveil logo
+        header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        icon_path = Path(__file__).resolve().parent.parent / "assets" / "icons" / "markveil-128.png"
+        if not icon_path.is_file():
+            icon_path = Path(__file__).resolve().parent.parent / "assets" / "icons" / "markveil.svg"
+        if icon_path.is_file():
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(icon_path), 56, 56, True
+                )
+                logo_img = Gtk.Image.new_from_pixbuf(pixbuf)
+                header_row.pack_start(logo_img, False, False, 0)
+            except Exception:
+                pass
+
+        title_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         title = Gtk.Label()
-        title.set_markup('<span size="xx-large" weight="bold">md-viewer</span>')
+        title.set_markup('<span size="xx-large" weight="bold">Markveil</span>')
         title.set_xalign(0.0)
-        outer.pack_start(title, False, False, 0)
+        title_col.pack_start(title, False, False, 0)
 
         subtitle = Gtk.Label(
             label="Native GTK3 Markdown Studio · Offline KaTeX & Mermaid · Agent Watch Mode"
         )
         subtitle.get_style_context().add_class("muted-label")
         subtitle.set_xalign(0.0)
-        subtitle.set_margin_top(4)
-        subtitle.set_margin_bottom(22)
         subtitle.set_line_wrap(True)
-        outer.pack_start(subtitle, False, False, 0)
+        title_col.pack_start(subtitle, False, False, 0)
+
+        header_row.pack_start(title_col, True, True, 0)
+        header_row.set_margin_bottom(22)
+        outer.pack_start(header_row, False, False, 0)
 
         # Action row
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -740,7 +757,7 @@ class ShortcutsDialog(Gtk.Dialog):
                 ("Ctrl+P", "Print / Export PDF"),
                 ("Ctrl+Shift+C", "Copy current file path"),
                 ("Ctrl+Tab / Ctrl+Shift+Tab", "Next / previous tab"),
-                ("Ctrl+Q", "Quit md-viewer"),
+                ("Ctrl+Q", "Quit Markveil"),
             ],
         ),
         (

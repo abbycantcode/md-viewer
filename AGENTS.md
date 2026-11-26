@@ -1,25 +1,32 @@
 # Repository Guidelines for Agents
 
-`md-viewer` is a native Linux GTK3 + WebKit2 Markdown studio with modular pure-Python engines under `mdviewer/` and unit tests under `tests/`.
+**Markveil** (`markveil` / `mdv`) is a native Linux GTK3 + WebKit2 Markdown studio with modular pure-Python engines under `mdviewer/` and unit/GUI tests under `tests/`.
 
 ## Directory Layout
 
 ```text
 .
-├── md_viewer.py                  # Top-level executable entrypoint
-├── md-viewer                     # Bash launcher -> .venv/bin/python md_viewer.py
+├── md_viewer.py                  # Top-level executable entrypoint -> mdviewer.cli.main()
+├── markveil                      # Primary Bash launcher -> .venv/bin/python md_viewer.py
 ├── mdv                           # Short CLI alias launcher -> .venv/bin/python md_viewer.py
+├── md-viewer                     # Backward-compatible launcher -> .venv/bin/python md_viewer.py
 ├── md-viewer-clipboard           # Clipboard launcher -> md_viewer.py --clipboard
-├── md-viewer.desktop             # Main desktop entry (text/markdown;text/x-markdown)
+├── markveil.desktop              # Main desktop entry (text/markdown;text/x-markdown)
 ├── md-viewer-clipboard.desktop   # Hidden clipboard action desktop entry
-├── setup.sh                      # Venv, dependency check, symlinks, MIME, optional GNOME keybind
-├── assets/vendor/                # Bundled offline KaTeX and Mermaid assets
-├── skills/md-viewer/SKILL.md     # Agent-agnostic skill for mdv workflows & *.review.md
+├── setup.sh                      # Venv, dependency check, icons, symlinks, MIME, GNOME keybind
+├── assets/
+│   ├── icons/                    # Markveil SVG + raster PNG icons (48, 128, 256)
+│   └── vendor/                   # Bundled offline KaTeX and Mermaid assets
+├── docs/screenshots/             # Live GTK3 + WebKit2 screenshots referenced in README.md
+├── skills/markveil/SKILL.md      # Agent-agnostic skill for mdv workflows & *.review.md
 ├── mdviewer/
-│   ├── __init__.py               # Package version (__version__)
-│   ├── app.py                    # GTK3 + WebKit2 studio application (when present/landed)
+│   ├── __init__.py               # __app_name__, __cli_name__, __version__
+│   ├── app.py                    # Multi-tab GTK3 + WebKit2 studio window & shortcuts
+│   ├── tab.py                    # DocumentTab: preview/split/edit, Watch Mode, diff overlay, search
+│   ├── sidebar.py                # Collapsible sidebar: Outline, Context Inspector, Comments
+│   ├── dialogs.py                # WelcomeView, AskAgentDialog, DiffPicker, Preferences, Shortcuts
 │   ├── cli.py                    # Argparse CLI, stdin detection, LaunchOptions
-│   ├── config.py                 # Atomic XDG config.json persistence (~/.config/md-viewer/)
+│   ├── config.py                 # Atomic XDG config.json (~/.config/markveil/) + legacy fallback
 │   ├── markdown_engine.py        # Code-first Markdown/math/Mermaid/technical-file renderer + CSP
 │   ├── sanitizer.py              # HTMLParser allowlist sanitizer & remote image gate
 │   ├── themes.py                 # 4 editorial themes (Paper, Obsidian, Sepia, Nordic) + doc CSS
@@ -33,16 +40,17 @@
 └── tests/
     ├── test_sanitizer.py         # Sanitizer allowlist, XSS, SVG/script stripping, image gate tests
     ├── test_markdown_engine.py   # Fences, math, task lists, technical renderers, CSP nonce tests
-    └── test_features.py          # Config, context inspector, diff, review comments, agent CLI, CLI tests
+    ├── test_features.py          # Config, context inspector, diff, review comments, agent CLI, CLI tests
+    └── test_gui_smoke.py         # Live GTK3 + WebKit2 multi-tab, Watch Mode, theme, quick/readonly tests
 ```
 
 ## Verification Commands
 
-Run all non-GUI checks from the repository root after editing code or scripts:
+Run all checks from the repository root after editing code or scripts:
 
 ```bash
-# Unit test suite (run inside project venv or with pytest)
-.venv/bin/python -m pytest -q
+# Unit + GUI smoke test suite
+.venv/bin/python -m pytest -v
 
 # Linter
 ruff check mdviewer tests md_viewer.py
@@ -51,7 +59,7 @@ ruff check mdviewer tests md_viewer.py
 .venv/bin/python -m py_compile md_viewer.py mdviewer/*.py tests/*.py
 
 # Bash launcher & installer syntax check
-bash -n setup.sh md-viewer mdv md-viewer-clipboard
+bash -n setup.sh markveil mdv md-viewer md-viewer-clipboard
 ```
 
 Note: In worktrees without a local `.venv`, use `/home/abby/Tools/md-viewer/.venv/bin/python -m pytest` (with `PYTHONPATH=.` if needed) or `pytest` on PATH.
@@ -72,5 +80,5 @@ xvfb-run -a timeout 5 .venv/bin/python md_viewer.py README.md || true
 
 - **Dependencies**: Zero new third-party Python packages beyond `markdown` and `pyyaml` (plus system `gi` / GTK3 / WebKit2 4.1 / GtkSource 300 / Pygments). Keep everything offline-first.
 - **Security**: Never bypass `mdviewer/sanitizer.py` with regex HTML cleaning, never weaken `_build_csp` (`connect-src 'none'`, per-render nonces), never enable `allow_universal_access_from_file_urls`, and keep Mermaid at `securityLevel: "strict"`.
-- **MIME scope**: Register only `text/markdown` and `text/x-markdown` in `md-viewer.desktop` and `setup.sh` so user `.json` or `.txt` defaults are untouched.
+- **MIME scope**: Register only `text/markdown` and `text/x-markdown` in `markveil.desktop` and `setup.sh` so user `.json` or `.txt` defaults are untouched.
 - **Desktop portability**: Keep GNOME `gsettings` calls guarded behind writability checks in `setup.sh`.

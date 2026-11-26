@@ -34,10 +34,17 @@ class AppConfig:
 
 
 def get_config_dir() -> Path:
-    """Return the XDG-compliant configuration directory for md-viewer."""
+    """Return the XDG-compliant configuration directory for Markveil."""
     xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
     base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
-    return base / "md-viewer"
+    return base / "markveil"
+
+
+def get_legacy_config_path() -> Path:
+    """Return the legacy md-viewer config.json path for transparent migration."""
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base / "md-viewer" / "config.json"
 
 
 def get_config_path() -> Path:
@@ -118,7 +125,14 @@ def _config_from_dict(raw: dict[str, Any]) -> AppConfig:
 
 def load_config(config_path: str | Path | None = None) -> AppConfig:
     """Load configuration from disk, returning defaults if missing or invalid."""
-    path = Path(config_path) if config_path is not None else get_config_path()
+    if config_path is not None:
+        path = Path(config_path)
+    else:
+        path = get_config_path()
+        if not path.is_file():
+            legacy = get_legacy_config_path()
+            if legacy.is_file():
+                path = legacy
     try:
         raw_text = path.read_text(encoding="utf-8")
         data = json.loads(raw_text)

@@ -140,6 +140,7 @@ def test_gui_studio_full_lifecycle(
     def _verify(a: MarkdownViewerApp) -> None:
         assert a.window is not None
         assert a.notebook is not None
+        assert a._content_stack.get_visible_child_name() == "tabs"
         assert a.notebook.get_n_pages() == 1
         assert not a.notebook.get_show_tabs()
 

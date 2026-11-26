@@ -35,10 +35,10 @@ class LaunchOptions:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the argument parser for md-viewer."""
+    """Create the argument parser for Markveil."""
     parser = argparse.ArgumentParser(
-        prog="md-viewer",
-        description="Native Markdown viewer, editor, and agent review studio.",
+        prog="markveil",
+        description="Markveil — Native Markdown studio for Linux and local coding-agent workflows.",
     )
     parser.add_argument(
         "files",
@@ -114,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"md-viewer {__version__}",
+        version=f"Markveil {__version__}",
     )
     return parser
 
@@ -190,9 +190,9 @@ def parse_args(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point for md-viewer CLI."""
+    """Entry point for Markveil CLI."""
     full_argv = sys.argv if argv is None else argv
-    prog = full_argv[0] if full_argv else "md-viewer"
+    prog = full_argv[0] if full_argv else "markveil"
     options = parse_args(full_argv[1:])
 
     from mdviewer.app import MarkdownViewerApp
