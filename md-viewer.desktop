@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Markdown Viewer
-GenericName=Markdown Viewer & Editor
-Comment=Markdown viewer and editor
+GenericName=Markdown Studio & Viewer
+Comment=Native Markdown studio with live watch mode, diff review, KaTeX, and Mermaid
 Exec=md-viewer %F
 TryExec=md-viewer
 Icon=text-x-markdown
@@ -10,4 +10,4 @@ Terminal=false
 Categories=Utility;TextEditor;Office;Viewer;
 MimeType=text/markdown;text/x-markdown;
 StartupNotify=true
-Keywords=markdown;viewer;editor;md;preview;
+Keywords=markdown;md;viewer;editor;agent;watch;diff;katex;mermaid;
